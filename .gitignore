@@ -1,0 +1,7 @@
+node_modules/
+.env
+.env.local
+npm-debug.log*
+
+# Local machine settings, not part of the project
+.claude/

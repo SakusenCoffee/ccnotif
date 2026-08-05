@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pre-Order Watch</title>
+    <meta name="description" content="Pick pre-orders and get a text the moment they become buyable." />
+    <link rel="stylesheet" href="/style.css" />
+    <link rel="alternate" type="application/rss+xml" title="Pre-order restocks" href="/feed.xml" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="wrap topbar-inner">
+        <div class="brand">
+          <span class="dot" aria-hidden="true"></span>
+          <div>
+            <h1>Pre-Order Watch</h1>
+            <p class="sub" id="store-sub">Loading…</p>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <button class="ghost" id="stores-btn" type="button">Stores</button>
+          <a class="ghost" href="/feed.xml" title="Restock feed for every store">RSS</a>
+          <button class="ghost" id="account-btn" type="button">Sign in</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="wrap">
+      <section class="intro">
+        <p>
+          Tick the pre-orders you care about. When one flips from sold&nbsp;out to
+          buyable, you get a text within minutes — and it lands in your personal RSS feed.
+        </p>
+      </section>
+
+      <section class="controls" aria-label="Filters">
+        <input
+          type="search"
+          id="search"
+          placeholder="Search titles and brands…"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <select id="site-filter" aria-label="Store">
+          <option value="">All stores</option>
+        </select>
+        <div class="segmented" role="group" aria-label="Availability filter">
+          <button type="button" data-status="unavailable" class="active">Not yet buyable</button>
+          <button type="button" data-status="available">In stock</button>
+          <button type="button" data-status="all">All</button>
+        </div>
+        <select id="sort" aria-label="Sort order">
+          <option value="title">A–Z</option>
+          <option value="newest">Newest</option>
+          <option value="price_asc">Price: low to high</option>
+          <option value="price_desc">Price: high to low</option>
+        </select>
+      </section>
+
+      <p class="status" id="status" role="status">Loading pre-orders…</p>
+
+      <div class="empty" id="empty" hidden>
+        <h2>No stores yet</h2>
+        <p>
+          Add a store and its URLs get searched for pre-order collections
+          automatically — you just confirm which ones to track.
+        </p>
+        <button class="primary" id="empty-add-btn" type="button">Add a store</button>
+      </div>
+
+      <ul class="grid" id="grid"></ul>
+    </main>
+
+    <div class="tray" id="tray" hidden>
+      <div class="wrap tray-inner">
+        <span id="tray-count">0 selected</span>
+        <div class="tray-actions">
+          <button type="button" class="ghost" id="clear-btn">Clear</button>
+          <button type="button" class="primary" id="save-btn">Save &amp; get texts</button>
+        </div>
+      </div>
+    </div>
+
+    <dialog id="dialog">
+      <form method="dialog" class="dialog-close"><button aria-label="Close">&times;</button></form>
+
+      <div class="pane" id="pane-phone">
+        <h2>Where should we text you?</h2>
+        <p class="muted">
+          We'll send a 6-digit code to confirm the number is yours. Message and data
+          rates may apply. Reply STOP at any time to end alerts.
+        </p>
+        <label for="phone">Mobile number</label>
+        <input id="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="(555) 123-4567" />
+        <p class="error" id="phone-error" hidden></p>
+        <button class="primary wide" id="send-code-btn" type="button">Send code</button>
+      </div>
+
+      <div class="pane" id="pane-code" hidden>
+        <h2>Enter your code</h2>
+        <p class="muted">Sent to <strong id="code-target"></strong>.</p>
+        <label for="code">6-digit code</label>
+        <input id="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000" />
+        <p class="error" id="code-error" hidden></p>
+        <button class="primary wide" id="check-code-btn" type="button">Verify</button>
+        <button class="linkish" id="back-btn" type="button">Use a different number</button>
+      </div>
+
+      <div class="pane" id="pane-account" hidden>
+        <h2>You're all set</h2>
+        <p class="muted">Alerts go to <strong id="account-phone"></strong>.</p>
+        <label for="feed-url">Your personal RSS feed</label>
+        <div class="copy-row">
+          <input id="feed-url" type="text" readonly />
+          <button class="ghost" id="copy-btn" type="button">Copy</button>
+        </div>
+        <p class="muted small">
+          Point any reader at this URL to see only the products on your watchlist.
+        </p>
+        <div class="account-buttons">
+          <button class="ghost" id="signout-btn" type="button">Sign out</button>
+          <button class="danger" id="unsub-btn" type="button">Stop all alerts</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="stores-dialog">
+      <form method="dialog" class="dialog-close"><button aria-label="Close">&times;</button></form>
+
+      <div class="pane" id="pane-stores">
+        <h2>Stores</h2>
+        <p class="muted">Each store's pre-order collections are polled every few minutes.</p>
+        <ul class="store-list" id="store-list"></ul>
+        <button class="primary wide" id="add-store-btn" type="button">Add a store</button>
+      </div>
+
+      <div class="pane" id="pane-add" hidden>
+        <h2>Add a store</h2>
+        <p class="muted">
+          Paste the store's address. We'll read its public catalogue and find the
+          collections worth watching.
+        </p>
+        <label for="store-url">Store URL</label>
+        <input id="store-url" type="text" inputmode="url" placeholder="hobbiesville.com" />
+        <p class="error" id="store-error" hidden></p>
+        <button class="primary wide" id="scan-btn" type="button">Scan store</button>
+        <button class="linkish" id="stores-back-btn" type="button">Back to stores</button>
+      </div>
+
+      <div class="pane" id="pane-choose" hidden>
+        <h2 id="found-name">Found a store</h2>
+        <p class="muted" id="found-summary"></p>
+
+        <div class="collection-head">
+          <label id="collection-label">Collections to watch</label>
+          <button class="linkish inline" id="toggle-all-btn" type="button">Show all</button>
+        </div>
+        <ul class="collection-list" id="collection-list"></ul>
+        <p class="muted small">
+          Products found in more than one collection are de-duplicated, so ticking a
+          category that already sits inside a larger collection is harmless.
+        </p>
+
+        <p class="error" id="choose-error" hidden></p>
+        <button class="primary wide" id="save-store-btn" type="button">Add store</button>
+        <button class="linkish" id="choose-back-btn" type="button">Use a different URL</button>
+      </div>
+    </dialog>
+
+    <footer class="wrap foot">
+      <p>
+        Not affiliated with the store. Data comes from its public product feed.
+        <a href="/feed.xml">Store-wide RSS</a> · <a href="/healthz">Status</a>
+      </p>
+    </footer>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

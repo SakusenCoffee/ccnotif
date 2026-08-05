@@ -1,0 +1,492 @@
+import { fileURLToPath } from 'node:url';
+import express from 'express';
+import cookieParser from 'cookie-parser';
+import twilio from 'twilio';
+import { assertConfig, config } from './config.js';
+import { migrate, query } from './db.js';
+import { discoverSite } from './discover.js';
+import { getFeedItems, parseTypes, renderRss } from './feed.js';
+import { sendSms, verificationMessage } from './notify.js';
+import { pollerState, pollSite, runPoll, startPoller } from './poller.js';
+import { addSite, deleteSite, getSite, listSites, updateSite } from './sites.js';
+import {
+  checkVerification,
+  getWatchedProductIds,
+  normalizePhone,
+  setWatches,
+  startVerification,
+  subscriberByFeedToken,
+  subscriberBySession,
+  unsubscribe,
+} from './subscribers.js';
+
+assertConfig();
+
+const app = express();
+app.set('trust proxy', 1);
+app.use(express.json({ limit: '64kb' }));
+app.use(cookieParser());
+
+// --- crude in-memory rate limiting -----------------------------------------
+// Good enough for a single-instance deploy. If this ever runs multiple
+// replicas, move the counters into Postgres or Redis.
+const hits = new Map();
+function rateLimit({ windowMs, max, key }) {
+  return (req, res, next) => {
+    const id = `${key}:${req.ip}`;
+    const now = Date.now();
+    const entry = hits.get(id);
+    if (!entry || now > entry.resetAt) {
+      hits.set(id, { count: 1, resetAt: now + windowMs });
+      return next();
+    }
+    if (entry.count >= max) {
+      const retryAfter = Math.ceil((entry.resetAt - now) / 1000);
+      res.set('retry-after', String(retryAfter));
+      return res.status(429).json({ error: 'rate_limited', retryAfter });
+    }
+    entry.count += 1;
+    next();
+  };
+}
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of hits) if (now > v.resetAt) hits.delete(k);
+}, 60_000).unref();
+
+async function requireSubscriber(req, res, next) {
+  const subscriber = await subscriberBySession(req.cookies?.[config.sessionCookie]);
+  if (!subscriber) return res.status(401).json({ error: 'not_signed_in' });
+  req.subscriber = subscriber;
+  next();
+}
+
+// Store management is gated only when ADMIN_TOKEN is set, so the app is usable
+// out of the box but can be locked down before the URL is shared.
+function requireAdmin(req, res, next) {
+  if (!config.adminToken) return next();
+  const provided = req.get('x-admin-token') || req.query.admin_token;
+  if (provided !== config.adminToken) return res.status(401).json({ error: 'admin_required' });
+  next();
+}
+
+function setSessionCookie(res, sessionToken) {
+  res.cookie(config.sessionCookie, sessionToken, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: config.publicUrl.startsWith('https://'),
+    maxAge: 1000 * 60 * 60 * 24 * 180,
+  });
+}
+
+// --- sites ------------------------------------------------------------------
+
+app.get('/api/sites', async (_req, res, next) => {
+  try {
+    const sites = await listSites();
+    res.json({
+      sites: sites.map((s) => ({
+        id: s.id,
+        origin: s.origin,
+        name: s.name,
+        currency: s.currency,
+        collections: s.collections,
+        enabled: s.enabled,
+        productCount: s.product_count,
+        availableCount: s.available_count,
+        lastPolledAt: s.last_polled_at,
+        lastError: s.last_error,
+        seeded: s.seeded_at !== null,
+      })),
+      adminRequired: Boolean(config.adminToken),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Probe a URL without saving anything, so the UI can show what it found.
+app.post(
+  '/api/sites/discover',
+  requireAdmin,
+  rateLimit({ windowMs: 10 * 60_000, max: 20, key: 'discover' }),
+  async (req, res, next) => {
+    try {
+      const result = await discoverSite(req.body?.url ?? '');
+      res.json(result);
+    } catch (err) {
+      if (err.message && !/^internal/i.test(err.message)) {
+        return res.status(400).json({ error: 'discover_failed', message: err.message });
+      }
+      next(err);
+    }
+  },
+);
+
+app.post(
+  '/api/sites',
+  requireAdmin,
+  rateLimit({ windowMs: 10 * 60_000, max: 10, key: 'add-site' }),
+  async (req, res, next) => {
+    try {
+      const existing = await listSites();
+      if (existing.length >= config.maxSites) {
+        return res.status(400).json({ error: 'too_many_sites', max: config.maxSites });
+      }
+
+      const site = await addSite(req.body ?? {});
+      // Seed it before responding so the UI shows real product counts straight
+      // away rather than an empty store until the next tick. pollSite reports
+      // failures through site.last_error instead of throwing, so a store that
+      // can't be read is still created and shows its error in the list.
+      const result = await pollSite(site);
+      res.status(201).json({ site, result });
+    } catch (err) {
+      if (err.code === 'duplicate' || err.code === 'no_collections' || err.message) {
+        return res.status(400).json({ error: err.code ?? 'add_failed', message: err.message });
+      }
+      next(err);
+    }
+  },
+);
+
+app.patch('/api/sites/:id', requireAdmin, async (req, res, next) => {
+  try {
+    const site = await updateSite(Number(req.params.id), req.body ?? {});
+    if (!site) return res.status(404).json({ error: 'not_found' });
+    res.json({ site });
+  } catch (err) {
+    if (err.code === 'no_collections') {
+      return res.status(400).json({ error: err.code, message: err.message });
+    }
+    next(err);
+  }
+});
+
+app.delete('/api/sites/:id', requireAdmin, async (req, res, next) => {
+  try {
+    const ok = await deleteSite(Number(req.params.id));
+    if (!ok) return res.status(404).json({ error: 'not_found' });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/sites/:id/poll', requireAdmin, async (req, res, next) => {
+  try {
+    const site = await getSite(Number(req.params.id));
+    if (!site) return res.status(404).json({ error: 'not_found' });
+    res.json({ result: await pollSite(site) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- product browsing -------------------------------------------------------
+
+app.get('/api/products', async (req, res, next) => {
+  try {
+    const { q, status = 'all', vendor, sort = 'title', siteId } = req.query;
+    const limit = Math.min(Number.parseInt(req.query.limit ?? '500', 10) || 500, 1000);
+    const offset = Math.max(Number.parseInt(req.query.offset ?? '0', 10) || 0, 0);
+
+    const where = ['true'];
+    const params = [];
+
+    if (q) {
+      params.push(`%${String(q).toLowerCase()}%`);
+      where.push(
+        `(lower(p.title) like $${params.length} or lower(coalesce(p.vendor,'')) like $${params.length})`,
+      );
+    }
+    if (status === 'available') where.push('p.available');
+    if (status === 'unavailable') where.push('not p.available');
+    if (vendor) {
+      params.push(vendor);
+      where.push(`p.vendor = $${params.length}`);
+    }
+    if (siteId) {
+      params.push(Number(siteId));
+      where.push(`p.site_id = $${params.length}`);
+    }
+
+    const orderBy =
+      {
+        title: 'p.title asc',
+        newest: 'coalesce(p.published_at, p.first_seen_at) desc',
+        price_asc: 'p.price asc nulls last',
+        price_desc: 'p.price desc nulls last',
+      }[sort] ?? 'p.title asc';
+
+    params.push(limit, offset);
+    const { rows } = await query(
+      `select p.id, p.external_id, p.handle, p.title, p.vendor, p.image_url, p.price,
+              p.available, p.published_at, p.became_available_at, p.collections,
+              p.site_id, s.name as site_name, s.origin as site_origin, s.currency
+         from products p
+         join sites s on s.id = p.site_id
+        where ${where.join(' and ')}
+        order by p.available asc, ${orderBy}
+        limit $${params.length - 1} offset $${params.length}`,
+      params,
+    );
+
+    const totalParams = siteId ? [Number(siteId)] : [];
+    const { rows: totals } = await query(
+      `select count(*)::int as total,
+              count(*) filter (where available)::int as available
+         from products ${siteId ? 'where site_id = $1' : ''}`,
+      totalParams,
+    );
+
+    res.json({
+      products: rows.map((p) => ({ ...p, url: `${p.site_origin}/products/${p.handle}` })),
+      totals: totals[0],
+      appName: config.appName,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/api/events', async (req, res, next) => {
+  try {
+    const items = await getFeedItems({ types: parseTypes(req.query.type), limit: 50 });
+    res.json({ events: items });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- verification + session -------------------------------------------------
+
+app.post(
+  '/api/verify/start',
+  rateLimit({ windowMs: 15 * 60_000, max: 10, key: 'verify-start' }),
+  async (req, res, next) => {
+    try {
+      const phone = normalizePhone(req.body?.phone);
+      if (!phone) return res.status(400).json({ error: 'invalid_phone' });
+
+      const { code, retryAfter } = await startVerification(phone);
+      if (retryAfter) return res.status(429).json({ error: 'cooldown', retryAfter });
+
+      const result = await sendSms(phone, verificationMessage(code));
+      if (!result.ok) return res.status(502).json({ error: 'sms_failed', detail: result.error });
+
+      res.json({ ok: true, phone, ttlMinutes: config.verification.codeTtlMinutes });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+app.post(
+  '/api/verify/check',
+  rateLimit({ windowMs: 15 * 60_000, max: 20, key: 'verify-check' }),
+  async (req, res, next) => {
+    try {
+      const phone = normalizePhone(req.body?.phone);
+      if (!phone) return res.status(400).json({ error: 'invalid_phone' });
+
+      const result = await checkVerification(phone, req.body?.code ?? '');
+      if (result.error) return res.status(400).json(result);
+
+      setSessionCookie(res, result.session);
+      const watches = await getWatchedProductIds(result.subscriber.id);
+      res.json({ ok: true, phone, watches, feedToken: result.subscriber.feed_token });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+app.get('/api/me', async (req, res, next) => {
+  try {
+    const subscriber = await subscriberBySession(req.cookies?.[config.sessionCookie]);
+    if (!subscriber) return res.json({ signedIn: false });
+    res.json({
+      signedIn: true,
+      phone: subscriber.phone,
+      feedToken: subscriber.feed_token,
+      watches: await getWatchedProductIds(subscriber.id),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.put('/api/watches', requireSubscriber, async (req, res, next) => {
+  try {
+    const ids = Array.isArray(req.body?.productIds) ? req.body.productIds : [];
+    const saved = await setWatches(req.subscriber.id, ids);
+    res.json({ ok: true, watches: saved, max: config.maxWatchesPerSubscriber });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/signout', (req, res) => {
+  res.clearCookie(config.sessionCookie);
+  res.json({ ok: true });
+});
+
+app.post('/api/unsubscribe', requireSubscriber, async (req, res, next) => {
+  try {
+    await unsubscribe(req.subscriber.id);
+    res.clearCookie(config.sessionCookie);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- RSS --------------------------------------------------------------------
+
+app.get('/feed.xml', async (req, res, next) => {
+  try {
+    const siteId = req.query.site ? Number(req.query.site) : null;
+    const site = siteId ? await getSite(siteId) : null;
+    const items = await getFeedItems({
+      types: parseTypes(req.query.type),
+      siteId: site?.id,
+      limit: 100,
+    });
+
+    res.type('application/rss+xml').send(
+      renderRss({
+        items,
+        title: site ? `${site.name} restocks` : `${config.appName} restocks`,
+        description: site
+          ? `Pre-orders that became buyable at ${site.name}.`
+          : 'Pre-orders that became buyable across every watched store.',
+        selfUrl: `${config.publicUrl}/feed.xml${site ? `?site=${site.id}` : ''}`,
+      }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/feed/:token.xml', async (req, res, next) => {
+  try {
+    const subscriber = await subscriberByFeedToken(req.params.token);
+    if (!subscriber) return res.status(404).type('text/plain').send('Unknown feed token');
+
+    const items = await getFeedItems({
+      types: parseTypes(req.query.type),
+      feedToken: subscriber.feed_token,
+      limit: 100,
+    });
+
+    res.type('application/rss+xml').send(
+      renderRss({
+        items,
+        title: `My ${config.appName} watchlist`,
+        description: 'Restocks for the pre-orders on your watchlist.',
+        selfUrl: `${config.publicUrl}/feed/${subscriber.feed_token}.xml`,
+      }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- Twilio inbound (STOP / START) -----------------------------------------
+
+app.post(
+  '/twilio/inbound',
+  express.urlencoded({ extended: false }),
+  (req, res, next) => {
+    // Twilio signs every webhook; reject anything we can't verify.
+    if (!config.twilio.enabled) return next();
+    const signature = req.get('x-twilio-signature');
+    const url = `${config.publicUrl}${req.originalUrl}`;
+    if (!twilio.validateRequest(config.twilio.authToken, signature, url, req.body)) {
+      return res.status(403).type('text/plain').send('Bad signature');
+    }
+    next();
+  },
+  async (req, res, next) => {
+    try {
+      const from = normalizePhone(req.body?.From);
+      const body = String(req.body?.Body ?? '').trim().toUpperCase();
+
+      if (from && /^(STOP|STOPALL|UNSUBSCRIBE|CANCEL|END|QUIT)$/.test(body)) {
+        await query(
+          'update subscribers set unsubscribed_at = now(), session_token = null where phone = $1',
+          [from],
+        );
+      } else if (from && /^(START|UNSTOP|YES)$/.test(body)) {
+        await query('update subscribers set unsubscribed_at = null where phone = $1', [from]);
+      }
+
+      // Twilio's Advanced Opt-Out already replies to STOP; stay quiet.
+      res.type('text/xml').send('<?xml version="1.0" encoding="UTF-8"?><Response></Response>');
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// --- ops --------------------------------------------------------------------
+
+app.get('/healthz', async (_req, res) => {
+  try {
+    await query('select 1');
+    res.json({
+      ok: true,
+      poller: pollerState,
+      twilio: config.twilio.enabled ? 'configured' : 'dry-run',
+      adminLocked: Boolean(config.adminToken),
+    });
+  } catch (err) {
+    res.status(503).json({ ok: false, error: err.message });
+  }
+});
+
+app.use(express.static(fileURLToPath(new URL('../public', import.meta.url)), { maxAge: '5m' }));
+
+app.use((err, _req, res, _next) => {
+  console.error('[http]', err);
+  res.status(500).json({ error: 'internal_error' });
+});
+
+/** Optionally create a store on first boot so a fresh deploy isn't empty. */
+async function seedFirstSite() {
+  if (!config.seedSite) return;
+  const existing = await listSites();
+  if (existing.length) return;
+  try {
+    const site = await addSite({
+      url: config.seedSite.url,
+      collections: config.seedSite.collections,
+    });
+    console.log(`[boot] seeded store ${site.name} (${site.origin})`);
+  } catch (err) {
+    console.error(`[boot] could not seed ${config.seedSite.url}: ${err.message}`);
+  }
+}
+
+const server = app.listen(config.port, async () => {
+  console.log(`[http] listening on :${config.port} (public: ${config.publicUrl})`);
+  try {
+    await migrate();
+    await seedFirstSite();
+    startPoller();
+  } catch (err) {
+    console.error('[boot] startup failed:', err);
+    process.exit(1);
+  }
+});
+
+for (const signal of ['SIGTERM', 'SIGINT']) {
+  process.on(signal, () => {
+    console.log(`[boot] ${signal} received, shutting down`);
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 10_000).unref();
+  });
+}
+
+export { app, runPoll };

@@ -1,0 +1,24 @@
+{
+  "name": "preorder-watch",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Watch Hobbiesville pre-orders and get texted the moment one becomes buyable.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "migrate": "node src/migrate.js",
+    "poll": "node src/poll-once.js"
+  },
+  "dependencies": {
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "libphonenumber-js": "^1.11.17",
+    "pg": "^8.13.1",
+    "twilio": "^5.4.0"
+  }
+}
