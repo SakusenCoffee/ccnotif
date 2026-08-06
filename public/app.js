@@ -116,7 +116,38 @@ function card(product) {
       }
     });
 
-    label.querySelector('.card-body').append(bell);
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'remove-watch';
+    remove.textContent = 'Remove';
+    remove.title = 'Stop watching this';
+
+    remove.addEventListener('click', async (e) => {
+      // The label around the card toggles selection; this must not do that too.
+      e.stopPropagation();
+      e.preventDefault();
+      remove.disabled = true;
+      try {
+        const next = [...state.saved].filter((id) => id !== product.id);
+        await api('/api/watches', { method: 'PUT', body: { productIds: next } });
+        state.saved = new Set(next);
+        state.selected = new Set(next);
+        delete state.notify[product.id];
+        // Reload rather than splicing the card out: the Watched view is a
+        // server-side filter, so the grid it should now show is the server's
+        // answer, not a guess at it.
+        await loadProducts();
+        renderTray();
+      } catch (err) {
+        showError('#store-error', err.data?.message ?? err.message);
+        remove.disabled = false;
+      }
+    });
+
+    const actions = document.createElement('span');
+    actions.className = 'watch-actions';
+    actions.append(bell, remove);
+    label.querySelector('.card-body').append(actions);
   }
 
   li.append(label);
@@ -164,10 +195,21 @@ function renderTray() {
     state.selected.size !== state.saved.size ||
     [...state.selected].some((id) => !state.saved.has(id));
 
-  tray.hidden = state.selected.size === 0 && !changed;
-  $('#tray-count').textContent = `${state.selected.size} selected${
-    changed ? ' · unsaved' : ' · watching'
-  }`;
+  // Only when there is something to save.
+  //
+  // It used to appear whenever anything was selected — but the selection starts
+  // as a copy of what you already watch, so the bar sat there permanently
+  // offering to save a change nobody had made. And it has no purpose at all in
+  // the Watched view, where the list *is* the saved state and each row carries
+  // its own Remove.
+  tray.hidden = !changed || state.watchedOnly;
+
+  const added = [...state.selected].filter((id) => !state.saved.has(id)).length;
+  const removed = [...state.saved].filter((id) => !state.selected.has(id)).length;
+  const parts = [];
+  if (added) parts.push(`${added} to add`);
+  if (removed) parts.push(`${removed} to remove`);
+  $('#tray-count').textContent = parts.join(' · ') || `${state.selected.size} selected`;
   $('#save-btn').disabled = !changed;
 }
 
