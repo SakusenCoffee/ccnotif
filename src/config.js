@@ -74,9 +74,17 @@ export const config = {
   sessionCookie: 'pw_session',
 };
 
+/**
+ * Report configuration problems without throwing. A missing DATABASE_URL used to
+ * kill the process at import time, which on Railway looks like a failed deploy
+ * with no usable logs. The app now starts, says what's wrong, and recovers on
+ * its own once the variable is set.
+ */
 export function assertConfig() {
   if (!config.databaseUrl) {
-    throw new Error('Bad configuration: DATABASE_URL is not set.');
+    console.error(
+      '[config] DATABASE_URL is not set. The app will start but cannot store anything yet.',
+    );
   }
   if (!config.twilio.enabled) {
     console.warn(

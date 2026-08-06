@@ -3,7 +3,7 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import twilio from 'twilio';
 import { assertConfig, config } from './config.js';
-import { migrate, query } from './db.js';
+import { dbState, initDb, query } from './db.js';
 import { discoverSite } from './discover.js';
 import { getFeedItems, parseTypes, renderRss } from './feed.js';
 import { sendSms, verificationMessage } from './notify.js';
@@ -69,6 +69,20 @@ function requireAdmin(req, res, next) {
   if (provided !== config.adminToken) return res.status(401).json({ error: 'admin_required' });
   next();
 }
+
+// Every /api route needs the database. Answer with a clear, actionable error
+// instead of a stack trace while it is still coming up.
+app.use('/api', (req, res, next) => {
+  if (dbState.ready) return next();
+  res.status(503).json({
+    error: 'database_unavailable',
+    message: config.databaseUrl
+      ? `Waiting for the database: ${dbState.error ?? 'connecting…'}`
+      : 'DATABASE_URL is not set. On Railway, add a variable to this service ' +
+        'referencing your Postgres, e.g. DATABASE_URL=${{Postgres.DATABASE_URL}}.',
+    configured: Boolean(config.databaseUrl),
+  });
+});
 
 function setSessionCookie(res, sessionToken) {
   res.cookie(config.sessionCookie, sessionToken, {
@@ -432,15 +446,30 @@ app.post(
 
 // --- ops --------------------------------------------------------------------
 
-app.get('/healthz', async (_req, res) => {
+// Liveness. Always 200 while the process is serving — a 503 here makes Railway
+// mark the whole deploy failed, which is wrong when the only problem is an
+// unset variable the deploy itself can't fix. The database state is reported in
+// the body, and /readyz is the strict check.
+app.get('/healthz', (_req, res) => {
+  res.json({
+    ok: true,
+    database: {
+      configured: Boolean(config.databaseUrl),
+      ready: dbState.ready,
+      error: dbState.error,
+      attempts: dbState.attempts,
+    },
+    poller: pollerState,
+    twilio: config.twilio.enabled ? 'configured' : 'dry-run',
+    adminLocked: Boolean(config.adminToken),
+  });
+});
+
+// Readiness: 200 only when the database is actually usable.
+app.get('/readyz', async (_req, res) => {
   try {
     await query('select 1');
-    res.json({
-      ok: true,
-      poller: pollerState,
-      twilio: config.twilio.enabled ? 'configured' : 'dry-run',
-      adminLocked: Boolean(config.adminToken),
-    });
+    res.json({ ok: true });
   } catch (err) {
     res.status(503).json({ ok: false, error: err.message });
   }
@@ -469,16 +498,23 @@ async function seedFirstSite() {
   }
 }
 
-const server = app.listen(config.port, async () => {
+// Bind the port first and unconditionally. Whatever is misconfigured, the
+// deploy comes up and can explain itself rather than crash-looping.
+const server = app.listen(config.port, () => {
   console.log(`[http] listening on :${config.port} (public: ${config.publicUrl})`);
-  try {
-    await migrate();
-    await seedFirstSite();
-    startPoller();
-  } catch (err) {
-    console.error('[boot] startup failed:', err);
-    process.exit(1);
-  }
+
+  // Keep retrying in the background; the poller starts once the schema is in.
+  initDb({
+    onReady: async () => {
+      await seedFirstSite();
+      startPoller();
+    },
+  }).catch((err) => console.error('[boot] database init failed:', err));
+});
+
+server.on('error', (err) => {
+  console.error(`[http] could not listen on :${config.port}: ${err.message}`);
+  process.exit(1);
 });
 
 for (const signal of ['SIGTERM', 'SIGINT']) {

@@ -27,6 +27,17 @@
     </header>
 
     <main class="wrap">
+      <section class="setup" id="setup" hidden>
+        <h2>Not connected to a database yet</h2>
+        <p id="setup-message"></p>
+        <p class="muted small">
+          On Railway, add a Postgres database to the project, then add a variable to
+          <em>this</em> service referencing it — Railway does not inject it automatically.
+        </p>
+        <pre id="setup-code">DATABASE_URL=${{Postgres.DATABASE_URL}}</pre>
+        <button class="ghost" id="setup-retry" type="button">Check again</button>
+      </section>
+
       <section class="intro">
         <p>
           Tick the pre-orders you care about. When one flips from sold&nbsp;out to

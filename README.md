@@ -63,19 +63,50 @@ rather than a generic failure.
 ## Deploying to Railway
 
 1. **Create the project** and point it at this repo.
-2. **Add Postgres**: `+ New` → `Database` → `Add PostgreSQL`. Railway injects
-   `DATABASE_URL` automatically. The schema is created on boot, so there is no
-   separate migration step.
-3. **Generate a domain** under Settings → Networking. Railway sets
+2. **Add Postgres**: `+ New` → `Database` → `Add PostgreSQL`.
+3. **Link it to this service.** Railway does **not** inject `DATABASE_URL` into
+   your app service automatically — the variable lives on the database service.
+   Open your app service → Variables → add:
+
+   ```
+   DATABASE_URL=${{Postgres.DATABASE_URL}}
+   ```
+
+   (Replace `Postgres` with the database service's actual name if you renamed
+   it.) Without this the app starts but shows a "not connected to a database"
+   page. The schema is created on boot, so there is no separate migration step.
+4. **Generate a domain** under Settings → Networking. Railway sets
    `RAILWAY_PUBLIC_DOMAIN`, which the app uses for links in texts and the RSS
    feed. Only set `PUBLIC_URL` if you attach a custom domain.
-4. **Turn off app sleeping** for this service. Serverless/sleep mode suspends the
+5. **Turn off app sleeping** for this service. Serverless/sleep mode suspends the
    container when there's no HTTP traffic, which stops the poller. This is the one
    Railway setting that will silently break the app.
-5. Open the site and add your first store.
+6. Open the site and add your first store.
 
-Health check is at `/healthz`. Twilio can stay unconfigured until you want real
-texts.
+Twilio can stay unconfigured until you want real texts.
+
+### Health checks
+
+| Path | Meaning |
+| --- | --- |
+| `/healthz` | Liveness. **Always 200** while the process is serving, with database status in the body. This is what `railway.json` points at. |
+| `/readyz` | Readiness. 200 only once the database is actually usable. |
+
+`/healthz` deliberately does not fail when the database is missing. A 503 there
+makes Railway mark the whole deploy failed, which is the wrong signal when the
+only problem is an unset variable that a redeploy cannot fix — you want the
+service up and telling you what to change.
+
+### If a deploy fails
+
+The app is built not to crash-loop, so check `/healthz` first — it reports
+exactly what is wrong.
+
+- **"DATABASE_URL is not set"** → step 3 above.
+- **"The server does not support SSL connections"** → shouldn't happen now; SSL
+  is chosen per host (off for `*.railway.internal` and loopback, on for public
+  hosts). Override with `DATABASE_SSL=true|false` if your provider differs.
+- **Deploy is "active" but nothing updates** → app sleeping is on (step 5).
 
 > **Note on GitHub Pages:** the front end can't be hosted there on its own. It
 > reads `/api/*` from the same origin, and the poller and database have to run
@@ -151,6 +182,13 @@ up for texts. Codes are stored as SHA-256 hashes, expire in 10 minutes, and allo
 muted for `NOTIFY_COOLDOWN_HOURS` (default 24). Shopify inventory flaps — without
 this, one wobbling product becomes a stream of texts. Flaps still appear in the
 RSS feed; they just don't re-text.
+
+**The app never exits because of configuration.** A missing or unreachable
+database used to kill the process at import time, which on Railway looks like a
+failed deploy with nothing useful in the logs. It now binds the port first,
+serves a page explaining what to set, and retries the connection in the
+background — so it starts working on its own the moment the variable is added or
+Postgres finishes booting, with no redeploy.
 
 **A store's first poll is silent.** Every product looks new on a fresh site, so
 the seed run records state without emitting events or sending anything. Adding a

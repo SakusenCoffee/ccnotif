@@ -1,6 +1,7 @@
 import { assertConfig } from './config.js';
-import { migrate, pool } from './db.js';
+import { initDb, pool } from './db.js';
 
 assertConfig();
-await migrate();
-await pool.end();
+const ok = await initDb({ retries: 3, delayMs: 2_000 });
+await pool?.end();
+if (!ok) process.exit(1);

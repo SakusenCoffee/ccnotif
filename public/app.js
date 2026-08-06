@@ -377,14 +377,36 @@ state.onSitesChanged = async () => {
   await loadProducts();
 };
 
-initStores();
-await reloadSites();
-renderSiteFilter();
-await loadMe();
-await loadProducts();
+/** Hide the whole app behind an explanation when the database isn't up yet. */
+function showSetup(message) {
+  $('#setup-message').textContent = message;
+  $('#setup').hidden = false;
+  for (const sel of ['.intro', '.controls', '#status', '#grid', '#empty', '#tray']) {
+    $(sel).hidden = true;
+  }
+}
 
-// Nothing to browse yet — open the add-store flow rather than an empty grid.
-if (!state.sites.length) openStores();
+async function boot() {
+  try {
+    await reloadSites();
+  } catch (err) {
+    if (err.status === 503) return showSetup(err.message);
+    throw err;
+  }
+
+  $('#setup').hidden = true;
+  renderSiteFilter();
+  await loadMe();
+  await loadProducts();
+
+  // Nothing to browse yet — open the add-store flow rather than an empty grid.
+  if (!state.sites.length) openStores();
+}
+
+$('#setup-retry').addEventListener('click', () => location.reload());
+
+initStores();
+await boot();
 
 // A ?t=<feedToken> link (the one included in every alert text) opens the
 // account pane directly.

@@ -200,6 +200,26 @@ dialog input { width: 100%; }
 .foot { padding: 40px 20px; color: var(--pw-muted); font-size: 12.5px; }
 .foot a { color: var(--pw-muted); }
 
+/* database-not-ready banner */
+.setup {
+  margin-top: 26px;
+  border: 1px solid color-mix(in srgb, var(--pw-danger) 45%, var(--pw-line));
+  border-radius: var(--pw-radius);
+  background: color-mix(in srgb, var(--pw-danger) 8%, var(--pw-panel));
+  padding: 22px 24px;
+}
+.setup h2 { margin: 0 0 8px; font-size: 17px; }
+.setup p { margin: 0 0 10px; font-size: 13.5px; }
+.setup pre {
+  margin: 0 0 16px;
+  padding: 11px 13px;
+  border-radius: 9px;
+  background: var(--pw-panel-2);
+  border: 1px solid var(--pw-line);
+  font-size: 12.5px;
+  overflow-x: auto;
+}
+
 /* empty state */
 .empty {
   border: 1px dashed var(--pw-line);
