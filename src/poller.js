@@ -1,6 +1,6 @@
 import { config } from './config.js';
 import { query, transaction } from './db.js';
-import { fetchSiteProducts } from './shopify.js';
+import { fetchSiteProducts } from './discover.js';
 import { enabledSites } from './sites.js';
 import { restockMessage, sendSms } from './notify.js';
 
@@ -34,7 +34,7 @@ async function syncSite(site) {
     const seeding = site.seeded_at === null;
 
     const { rows: previous } = await client.query(
-      'select external_id, available from products where site_id = $1 and external_id = any($2::bigint[])',
+      'select external_id, available from products where site_id = $1 and external_id = any($2::text[])',
       [site.id, products.map((p) => p.externalId)],
     );
     const wasAvailable = new Map(previous.map((r) => [r.external_id, r.available]));
@@ -47,13 +47,14 @@ async function syncSite(site) {
       const isNew = before === undefined;
 
       const { rows } = await client.query(
-        `insert into products (site_id, external_id, handle, title, vendor, product_type,
+        `insert into products (site_id, external_id, handle, url, title, vendor, product_type,
                                image_url, price, available, collections, published_at,
                                is_preorder, last_seen_at, became_available_at)
-           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, now(),
-                   case when $9 then now() else null end)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, now(),
+                   case when $10 then now() else null end)
          on conflict (site_id, external_id) do update set
            handle       = excluded.handle,
+           url          = excluded.url,
            title        = excluded.title,
            vendor       = excluded.vendor,
            product_type = excluded.product_type,
@@ -73,6 +74,7 @@ async function syncSite(site) {
           site.id,
           p.externalId,
           p.handle,
+          p.url,
           p.title,
           p.vendor,
           p.productType,

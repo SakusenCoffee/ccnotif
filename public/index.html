@@ -79,8 +79,8 @@
       <div class="empty" id="empty" hidden>
         <h2>No stores yet</h2>
         <p>
-          Add a store and its URLs get searched for pre-order collections
-          automatically — you just confirm which ones to track.
+          Add a store and it gets searched for pre-order sections automatically —
+          you just confirm which ones to track.
         </p>
         <button class="primary" id="empty-add-btn" type="button">Add a store</button>
       </div>
@@ -146,7 +146,7 @@
 
       <div class="pane" id="pane-stores">
         <h2>Stores</h2>
-        <p class="muted">Each store's pre-order collections are polled every few minutes.</p>
+        <p class="muted">Each store's pre-order sections are polled every few minutes.</p>
         <ul class="store-list" id="store-list"></ul>
         <button class="primary wide" id="add-store-btn" type="button">Add a store</button>
       </div>
@@ -154,8 +154,8 @@
       <div class="pane" id="pane-add" hidden>
         <h2>Add a store</h2>
         <p class="muted">
-          Paste the store's address. We'll read its public catalogue and find the
-          collections worth watching.
+          Paste the store's address. We'll work out what it runs, read its catalogue,
+          and find the sections worth watching.
         </p>
         <label for="store-url">Store URL</label>
         <input id="store-url" type="text" inputmode="url" placeholder="hobbiesville.com" />
@@ -169,13 +169,13 @@
         <p class="muted" id="found-summary"></p>
 
         <div class="collection-head">
-          <label id="collection-label">Collections to watch</label>
+          <label id="collection-label">Sections to watch</label>
           <button class="linkish inline" id="toggle-all-btn" type="button">Show all</button>
         </div>
         <ul class="collection-list" id="collection-list"></ul>
         <p class="muted small">
-          Products found in more than one collection are de-duplicated, so ticking a
-          category that already sits inside a larger collection is harmless.
+          Products found in more than one section are de-duplicated, so ticking a
+          category that already sits inside a larger one is harmless.
         </p>
 
         <p class="error" id="choose-error" hidden></p>

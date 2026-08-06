@@ -73,9 +73,11 @@ function renderStoreList() {
     } else {
       meta.className = 'store-meta';
       const count = site.productCount ?? 0;
+      const sections = site.collections.length;
+      const noun = site.sectionNoun ?? 'collection';
       meta.textContent =
         `${count} product${count === 1 ? '' : 's'} · ${site.availableCount ?? 0} buyable · ` +
-        `${site.collections.length} collection${site.collections.length === 1 ? '' : 's'}`;
+        `${sections} ${noun}${sections === 1 ? '' : 's'}`;
     }
 
     info.append(name, meta);
@@ -144,7 +146,7 @@ function renderCollections() {
     const li = document.createElement('li');
     li.innerHTML =
       '<label><span class="coll-text"><span class="coll-title">Nothing looked like a pre-order section.</span>' +
-      '<span class="coll-sub">Use “Show all” to pick collections by hand.</span></span></label>';
+      '<span class="coll-sub">Use “Show all” to pick sections by hand.</span></span></label>';
     list.append(li);
     return;
   }
@@ -195,14 +197,17 @@ async function scanStore() {
     });
     showingAll = false;
 
+    const noun = discovered.sectionNoun ?? 'collection';
+    const plural = `${noun}s`;
+
     $('#found-name').textContent = discovered.name;
     $('#found-summary').textContent =
-      `${discovered.origin} · ${discovered.totalCollections} collections found · ` +
-      `prices in ${discovered.currency}`;
+      `${discovered.origin} · ${discovered.platformLabel} · ` +
+      `${discovered.totalCollections} ${plural} found · prices in ${discovered.currency}`;
     $('#toggle-all-btn').textContent = `Show all ${discovered.totalCollections}`;
     $('#collection-label').textContent = discovered.suggested.length
       ? `${discovered.suggested.length} look like pre-order sections`
-      : 'Collections to watch';
+      : `${plural[0].toUpperCase()}${plural.slice(1)} to watch`;
 
     renderCollections();
     showPane('choose');
@@ -216,7 +221,7 @@ async function scanStore() {
 async function saveStore() {
   const handles = selectedHandles();
   if (!handles.length) {
-    return showError('#choose-error', 'Pick at least one collection to watch.');
+    return showError('#choose-error', 'Pick at least one section to watch.');
   }
 
   const button = $('#save-store-btn');

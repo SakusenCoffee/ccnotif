@@ -3,8 +3,9 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { config } from './config.js';
 
-// Shopify product ids exceed 2^31 but stay well inside Number.MAX_SAFE_INTEGER,
-// so parse int8 as a number rather than the string node-postgres defaults to.
+// Row ids are bigserial and stay well inside Number.MAX_SAFE_INTEGER, so parse
+// int8 as a number rather than the string node-postgres defaults to — the API
+// and the client both treat them as numbers.
 pg.types.setTypeParser(pg.types.builtins.INT8, (v) => Number.parseInt(v, 10));
 pg.types.setTypeParser(pg.types.builtins.NUMERIC, (v) => Number.parseFloat(v));
 

@@ -1,21 +1,5 @@
-import { safeFetch, safeFetchJson } from './safe-fetch.js';
-
-const COLLECTION_PAGE_SIZE = 250;
-const MAX_COLLECTION_PAGES = 8;
-
-/** Handles/titles that look like they hold things you'd want an alert about. */
-const PREORDER_PATTERNS = [
-  { re: /\bpre[\s._-]?orders?\b/i, score: 100, why: 'pre-order' },
-  { re: /\bpreorders?\b/i, score: 100, why: 'pre-order' },
-  { re: /\bcoming[\s._-]?soon\b/i, score: 70, why: 'coming soon' },
-  { re: /\bupcoming\b/i, score: 60, why: 'upcoming' },
-  { re: /\bnew[\s._-]?(arrival|release)s?\b/i, score: 40, why: 'new arrivals' },
-  { re: /\bback[\s._-]?in[\s._-]?stock\b/i, score: 40, why: 'restocks' },
-  { re: /\bdrops?\b/i, score: 30, why: 'drops' },
-];
-
-// Collections that merely *exclude* pre-orders are the opposite of what we want.
-const NEGATIVE_PATTERNS = [/\bnon[\s._-]?pre/i, /\bno[\s._-]?pre[\s._-]?order/i, /\bnot[\s._-]?pre/i];
+import { politeFetch } from './robots.js';
+import { ADAPTERS, adapterFor } from './platforms/index.js';
 
 export function normalizeOrigin(input) {
   const trimmed = String(input ?? '').trim();
@@ -25,99 +9,58 @@ export function normalizeOrigin(input) {
   return `${url.protocol}//${url.host}`;
 }
 
-function scoreCollection(collection) {
-  const haystack = `${collection.handle} ${collection.title}`;
-  if (NEGATIVE_PATTERNS.some((re) => re.test(haystack))) return null;
+/**
+ * Where the store actually lives. Typing "miniaturemarket.com" reaches a host
+ * that redirects to www, and if we kept the address as typed we'd be judging
+ * every link on the page against an origin the store never uses — its own
+ * navigation would look off-site. Follow the homepage once and adopt whatever
+ * it settles on, so a site is stored under one canonical origin no matter how
+ * it was typed.
+ */
+async function canonicalOrigin(origin, signal) {
+  const probe = await politeFetch(origin, { signal }).catch(() => null);
+  if (!probe?.ok) return { origin, reachable: false };
 
-  for (const { re, score, why } of PREORDER_PATTERNS) {
-    if (re.test(haystack)) return { score, why };
-  }
-  return null;
-}
-
-async function fetchAllCollections(origin, signal) {
-  const collections = [];
-  for (let page = 1; page <= MAX_COLLECTION_PAGES; page += 1) {
-    const body = await safeFetchJson(
-      `${origin}/collections.json?limit=${COLLECTION_PAGE_SIZE}&page=${page}`,
-      { signal },
-    );
-    const batch = body.collections ?? [];
-    collections.push(...batch);
-    if (batch.length < COLLECTION_PAGE_SIZE) break;
-  }
-  return collections;
+  const landed = new URL(probe.url);
+  return { origin: `${landed.protocol}//${landed.host}`, reachable: true };
 }
 
 /**
- * Probe a URL and work out whether we can watch it, what it's called, and which
- * of its collections look like pre-order sections.
+ * Probe a URL and work out whether we can watch it: which platform it runs,
+ * what it's called, and which of its sections look like pre-order listings.
+ *
+ * Each adapter gets a turn until one recognises the store. An adapter that
+ * recognises it but can't read it throws, and that error wins — it says
+ * something true about the store, which "unsupported" would not.
  */
 export async function discoverSite(input, { signal } = {}) {
-  const origin = normalizeOrigin(input);
+  const requested = normalizeOrigin(input);
+  const { origin, reachable } = await canonicalOrigin(requested, signal);
+  if (!reachable) throw new Error(`Could not reach ${requested}.`);
 
-  // meta.json is the cheapest proof that this is a Shopify storefront, and it
-  // carries the store name and currency.
-  let meta = null;
-  try {
-    meta = await safeFetchJson(`${origin}/meta.json`, { signal });
-  } catch {
-    // Some stores disable it; fall back to the collections probe below.
+  for (const adapter of ADAPTERS) {
+    const result = await adapter.discover(origin, { signal });
+    if (!result) continue;
+    return {
+      origin,
+      platform: adapter.id,
+      platformLabel: adapter.label,
+      sectionNoun: adapter.sectionNoun,
+      ...result,
+    };
   }
 
-  let collections;
-  try {
-    collections = await fetchAllCollections(origin, signal);
-  } catch (err) {
-    // Distinguish "not a Shopify store" from "the store is down".
-    const probe = await safeFetch(origin, { headers: { accept: 'text/html' }, signal }).catch(
-      () => null,
-    );
-    if (probe && probe.ok) {
-      throw new Error(
-        `${origin} is reachable but does not publish a Shopify product feed, so it can't be watched.`,
-      );
-    }
-    throw new Error(`Could not read ${origin}: ${err.message}`);
+  throw new Error(
+    `${origin} is reachable but doesn't run a storefront we can read ` +
+      `(${ADAPTERS.map((a) => a.label).join(' or ')}), so it can't be watched.`,
+  );
+}
+
+/** Read every watched section of a saved site, using the platform it runs. */
+export async function fetchSiteProducts(site, { signal } = {}) {
+  const adapter = adapterFor(site.platform);
+  if (!adapter) {
+    throw new Error(`${site.origin} was added as "${site.platform}", which is no longer supported.`);
   }
-
-  if (!collections.length) {
-    throw new Error(`${origin} published no collections, so there is nothing to watch.`);
-  }
-
-  const scored = [];
-  for (const collection of collections) {
-    const hit = scoreCollection(collection);
-    if (!hit) continue;
-    scored.push({
-      handle: collection.handle,
-      title: collection.title,
-      productCount: collection.products_count ?? null,
-      score: hit.score,
-      why: hit.why,
-    });
-  }
-
-  // Biggest, most obviously-pre-order collections first.
-  scored.sort((a, b) => b.score - a.score || (b.productCount ?? 0) - (a.productCount ?? 0));
-
-  const hostname = new URL(origin).hostname.replace(/^www\./, '');
-  return {
-    origin,
-    name: meta?.name || hostname,
-    currency: meta?.currency || 'USD',
-    platform: 'shopify',
-    totalCollections: collections.length,
-    suggested: scored.slice(0, 25),
-    // Everything else, so the UI can offer a manual pick.
-    others: collections
-      .filter((c) => !scored.some((s) => s.handle === c.handle))
-      .map((c) => ({
-        handle: c.handle,
-        title: c.title,
-        productCount: c.products_count ?? null,
-      }))
-      .sort((a, b) => (b.productCount ?? 0) - (a.productCount ?? 0))
-      .slice(0, 300),
-  };
+  return adapter.fetchProducts(site, { signal });
 }

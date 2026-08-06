@@ -13,14 +13,16 @@ create table if not exists sites (
   created_at     timestamptz not null default now()
 );
 
--- Products mirrored from each site's public products.json feed.
--- `external_id` is the store's own product id; it is only unique within a site,
--- so the primary key is a surrogate.
+-- Products mirrored from each watched store.
+-- `external_id` is the store's own identifier for the product — a numeric id on
+-- Shopify, a SKU on Shopware. It is only unique within a site, so the primary
+-- key is a surrogate.
 create table if not exists products (
   id                  bigserial primary key,
   site_id             bigint      not null references sites (id) on delete cascade,
-  external_id         bigint      not null,
+  external_id         text        not null,
   handle              text        not null,
+  url                 text,
   title               text        not null,
   vendor              text,
   product_type        text,
@@ -36,8 +38,42 @@ create table if not exists products (
   unique (site_id, external_id)
 );
 
--- Added after the first deploy, so it has to be an ALTER for existing databases.
+-- Added after the first deploy, so these have to be ALTERs for existing
+-- databases. `create table if not exists` above is a no-op once the table is
+-- there, and these run every boot, so each has to be safe to repeat.
 alter table products add column if not exists is_preorder boolean not null default false;
+alter table products add column if not exists url text;
+
+-- external_id started out bigint, which fits a Shopify product id but not a
+-- Shopware SKU. Widening to text keeps every existing row addressable: the
+-- numbers become their own decimal spelling, which is what the Shopify adapter
+-- now sends, so nothing already stored looks like a new product afterwards.
+--
+-- Guarded on the current type rather than run unconditionally: ALTER COLUMN TYPE
+-- rewrites the whole table and rebuilds its indexes, and this file runs on every
+-- boot. Unguarded, that is a full rewrite of the products table on every restart.
+do $$
+begin
+  if exists (
+    select 1
+      from information_schema.columns
+     where table_schema = current_schema()
+       and table_name = 'products'
+       and column_name = 'external_id'
+       and data_type <> 'text'
+  ) then
+    alter table products alter column external_id type text using external_id::text;
+  end if;
+end $$;
+
+-- Back-fill the stored link for rows written before the column existed. Every
+-- one of those came from a Shopify store, where the product URL is the origin
+-- plus the handle.
+update products p
+   set url = s.origin || '/products/' || p.handle
+  from sites s
+ where s.id = p.site_id
+   and p.url is null;
 
 create index if not exists products_available_idx on products (site_id, available);
 create index if not exists products_title_idx on products (lower(title));

@@ -24,20 +24,27 @@ export async function enabledSites() {
   return rows;
 }
 
-/**
- * Create a site from a user-supplied URL. The collections are re-derived from a
- * fresh probe rather than trusted from the request, so a caller can't make us
- * poll arbitrary paths.
- */
-export async function addSite({ url, collections, name }) {
-  const origin = normalizeOrigin(url);
-
-  const { rows: existing } = await query('select id from sites where origin = $1', [origin]);
-  if (existing.length) {
+async function assertNotAlreadyAdded(origin) {
+  const { rows } = await query('select id from sites where origin = $1', [origin]);
+  if (rows.length) {
     throw Object.assign(new Error('That store has already been added.'), { code: 'duplicate' });
   }
+}
 
-  const discovered = await discoverSite(origin);
+/**
+ * Create a site from a user-supplied URL. The sections to poll are re-derived
+ * from a fresh probe rather than trusted from the request, so a caller can't
+ * make us fetch arbitrary paths.
+ */
+export async function addSite({ url, collections, name }) {
+  await assertNotAlreadyAdded(normalizeOrigin(url));
+
+  const discovered = await discoverSite(url);
+  // Discovery follows the store to its canonical host, so "example.com" and
+  // "www.example.com" can't be added as two stores.
+  const origin = discovered.origin;
+  await assertNotAlreadyAdded(origin);
+
   const known = new Set([
     ...discovered.suggested.map((c) => c.handle),
     ...discovered.others.map((c) => c.handle),
@@ -49,7 +56,7 @@ export async function addSite({ url, collections, name }) {
   ).filter((handle) => known.has(handle));
 
   if (!chosen.length) {
-    throw Object.assign(new Error('Pick at least one collection that exists on that store.'), {
+    throw Object.assign(new Error('Pick at least one section that exists on that store.'), {
       code: 'no_collections',
     });
   }
@@ -83,7 +90,7 @@ export async function updateSite(id, { collections, enabled, name }) {
     ]);
     nextCollections = collections.filter((h) => known.has(h));
     if (!nextCollections.length) {
-      throw Object.assign(new Error('Pick at least one collection that exists on that store.'), {
+      throw Object.assign(new Error('Pick at least one section that exists on that store.'), {
         code: 'no_collections',
       });
     }

@@ -4,9 +4,11 @@ Add a store, tick the pre-orders you care about, and **get a text the moment one
 becomes buyable** — plus a real RSS feed of the same events, so you can read it in
 any feed reader instead of (or as well as) getting texts.
 
-Stores are added from the UI. You paste a URL, the app reads that store's public
-catalogue, works out which of its collections are pre-order sections, and you
-confirm which ones to track.
+Stores are added from the UI. You paste a URL, the app works out what platform the
+store runs, reads its catalogue, works out which of its sections are pre-order
+listings, and you confirm which ones to track.
+
+**Supported platforms: Shopify and Shopware 6.**
 
 ## How it works
 
@@ -14,29 +16,58 @@ confirm which ones to track.
 paste a store URL
       │
       ▼
-read /meta.json + /collections.json  ──►  rank collections that look like pre-orders
+each platform adapter gets a turn  ──►  rank sections that look like pre-orders
       │                                          │
       ▼                                          ▼
   you confirm which to watch  ──────────►  saved as a site row
                                                  │
                             poll every 5 min ────┤
                                                  ▼
-                              variant flipped false ─► true?
+                            product flipped unbuyable ─► buyable?
                                     ┌─────────────┴─────────────┐
                                     ▼                           ▼
                           text everyone watching it      append to RSS feed
 ```
 
-The signal is `variants[].available` in the store's own JSON. A product counts as
-buyable when **any** variant is — the exact flag the storefront uses to decide
-between an "Add to cart" button and a "Sold out" badge. Nothing is scraped; Shopify
-stores publish this themselves.
+The signal is always the same question — *can you actually put this in a cart right
+now?* — but each platform answers it differently, so each has an adapter in
+`src/platforms/`. Adding a platform means writing one, not touching the poller.
 
-### Store discovery
+### Shopify
 
-`/meta.json` gives the store's name and currency. `/collections.json` is paged
-through for the full collection list, and each is scored against handle/title
-patterns:
+`variants[].available` in the store's own JSON. A product counts as buyable when
+**any** variant is — the exact flag the storefront uses to decide between an "Add to
+cart" button and a "Sold out" badge. `/meta.json` gives the name and currency, and
+`/collections.json` is paged through for the collection list. Nothing is scraped;
+these are public feeds a Shopify store publishes deliberately.
+
+### Shopware 6
+
+Shopware's machine-readable API is the Store API, which needs an `sw-access-key`
+issued per sales channel — a normal storefront never puts one in the page, so there
+is no feed to read and the rendered HTML *is* the interface.
+
+The buyable signal is whether the card carries Shopware's add-to-cart form
+(`action="/checkout/line-item/add"`). That form is rendered only when the product can
+really be bought; a sold-out product gets a disabled label and a back-in-stock
+notification form instead. Products are keyed by **SKU**, because the product UUID
+appears only inside that form — keying on it would make a product change identity at
+the exact moment it became buyable, which is the one event this app exists to catch.
+
+Categories come from the navigation tree the storefront renders into every page, so
+one request gets the catalogue's shape. Links that aren't navigation are admitted
+only when their own last path segment reads as a pre-order section — that picks up a
+store's headline listing when it's a promo button rather than a menu item (Miniature
+Market's site-wide `/preorders` is an `<a class="btn">`), while keeping product URLs
+out: `/Some-Set-Preorder/SKU123` ends in its SKU, not in "preorder".
+
+Scraping is far more traffic than a JSON feed — one request per 24 products rather
+than per 250 — so every fetch goes through `src/robots.js`, which obeys `Disallow`
+and spaces requests out by `Crawl-delay`. See [Crawl budget](#crawl-budget).
+
+### Section discovery
+
+Each candidate section is scored against handle/title patterns:
 
 | Pattern | Score | Pre-ticked |
 | --- | --- | --- |
@@ -46,19 +77,41 @@ patterns:
 | `new arrivals`, `new releases`, `back in stock` | 40 | no |
 | `drop` / `drops` | 30 | no |
 
-Collections matching `non-pre-order` / `no-preorder` are excluded — several stores
+Sections matching `non-pre-order` / `no-preorder` are excluded — several stores
 have a "Sale items (Non Pre Order)" collection, which is the opposite of what you
 want.
 
 Anything below 70 is listed but left unticked, and "Show all" exposes every
-collection for a manual pick. Products found in more than one collection are
-de-duplicated, so ticking a category that sits inside a larger collection is
-harmless.
+section for a manual pick. Products found in more than one section are
+de-duplicated, so ticking a category that sits inside a larger one is harmless.
 
-Verified against four real storefronts during development: Hobbiesville (CAD, 676
-collections), Total Cards (GBP, 2000), Hairy Tarantula (CAD, 258), and Card
-Merchant WestCity (NZD, 179). Non-Shopify sites are rejected with a clear message
+Discovery follows the store to its canonical host before anything else, so
+`example.com` and `www.example.com` can't be added as two separate stores — and a
+store's own navigation isn't mistaken for off-site links.
+
+Verified against five real storefronts during development: Hobbiesville (Shopify,
+CAD, 676 collections), Total Cards (GBP, 2000), Hairy Tarantula (CAD, 258), Card
+Merchant WestCity (NZD, 179), and Miniature Market (Shopware, USD, 109 categories).
+A store on a platform no adapter recognises is rejected with a message saying so,
 rather than a generic failure.
+
+### Crawl budget
+
+A scraped store costs one request per listing page, every poll, forever — enough
+traffic that the store's own rules about it matter. `robots.txt` is fetched, cached
+for six hours, and obeyed: `Disallow` is enforced, and requests to one host are
+serialised and spaced by its `Crawl-delay`.
+
+This has a real cost. Miniature Market publishes `Crawl-delay: 10`, so a category
+of ~340 products (15 pages) takes about two and a half minutes to read, and its
+site-wide `/preorders` — 76 pages — would take over twelve. **Prefer the narrower
+per-department sections** (`board-games/preorders.html` and friends) over a store's
+"view all" listing.
+
+Polls that overrun `POLL_INTERVAL_SECONDS` are safe: the poller skips a tick while
+the previous run is still in flight rather than piling runs up. If a section is
+still not finished within `CRAWL_MAX_PAGES`, the run says so explicitly instead of
+reporting a clean sweep over a partial catalogue.
 
 ## Deploying to Railway
 
@@ -207,6 +260,24 @@ schemes, a request timeout, and a response size cap. Without this, "add a store"
 is a server-side request forgery hole pointed at Railway's internal network. Set
 `ADMIN_TOKEN` as well before sharing the URL publicly.
 
+**Platforms are adapters, not branches.** Each lives in `src/platforms/` and
+exposes the same two calls: `discover(origin)`, which returns `null` for "not my
+platform" and *throws* for "mine, and something is wrong", and
+`fetchProducts(site)`. The distinction matters — a store we recognise but can't
+read reports the real reason instead of falling through to "unsupported". The
+poller has no idea which platform it is polling.
+
+**Products are keyed by whatever the store calls stable, not by a number.**
+`external_id` is `text`: a numeric id on Shopify, a SKU on Shopware. It was
+`bigint`, and the migration converts existing ids to their own decimal spelling —
+exactly what the Shopify adapter now emits — so no existing product looks new after
+the upgrade and nobody gets a burst of "new pre-order" alerts for a catalogue they
+were already watching.
+
+**Product URLs are stored, not rebuilt.** Only Shopify's is derivable from a handle
+(`/products/<handle>`); a Shopware URL is its own SEO path. The link is written at
+ingest.
+
 **Phone verification is mandatory.** A 6-digit code is texted and must be entered
 before a watchlist can be saved. Without it anyone could sign a stranger's number
 up for texts. Codes are stored as SHA-256 hashes, expire in 10 minutes, and allow
@@ -242,6 +313,8 @@ tags. Detection uses both, ignoring `*Show_Pre Orders`-style tags — those are
 theme filter markers sitting on every item in a collection, so they are evidence
 of nothing. Across Hobbiesville's three watched collections this identifies 316
 of 317 products, with 2 false positives in a 250-item non-pre-order control.
+Shopware themes badge pre-orders directly, so that badge is used where present and
+the title test is the fallback.
 
 That yields four states rather than two: **Pre-order open**, **Pre-order not
 open**, **In stock**, **Sold out** — and a filter to show only one kind. On the
@@ -261,8 +334,11 @@ whose price hasn't been announced. These become null at ingest so the UI, feed,
 and texts all say "Price TBA".
 
 **Currency is per store.** Hobbiesville prices in CAD, not USD. Each site's
-currency comes from its `meta.json` and prices render as `CA$307.00` / `NZ$154.00`
-rather than a bare `$`.
+currency comes from its `meta.json` (or, on a scraped store, whatever the page
+declares, falling back to the symbol its prices are rendered with) and prices show
+as `CA$307.00` / `NZ$154.00` rather than a bare `$`. Displayed prices are parsed
+with the separator convention worked out from the number itself, so `€1.234,56`
+doesn't come through as `1.23`.
 
 **CSS custom properties are namespaced `--pw-*`, and `[hidden]` is forced with
 `!important`.** Generic names like `--accent` collide with variables injected by
@@ -282,3 +358,7 @@ testing.
 - Deleting a store deletes its products, events, and any watches on them.
 - Store JSON feeds are public and unauthenticated, but they're still someone's
   server. Five-minute polling is well-mannered; don't drop it to seconds.
+- Scraped stores cost far more than that per poll. `robots.txt` is honoured, but
+  the ceilings are yours to set: `CRAWL_MAX_DELAY_MS` caps how long a store's own
+  `Crawl-delay` can hold up a run, and `CRAWL_MAX_PAGES` caps how deep one section
+  is read. Watch narrow sections rather than a store's "view all" listing.

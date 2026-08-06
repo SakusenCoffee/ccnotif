@@ -64,6 +64,20 @@ export const config = {
     maxPages: int(process.env.MAX_PAGES_PER_COLLECTION, 10),
   },
 
+  // Stores with no JSON feed are read by fetching listing pages, which is far
+  // more traffic than a products.json call. These bound how hard we lean on one.
+  crawl: {
+    // Gap between requests when robots.txt names no Crawl-delay.
+    defaultDelayMs: int(process.env.CRAWL_DELAY_MS, 1_000),
+    // Ceiling on a store's own Crawl-delay. Some publish figures (300s and up)
+    // that would make a poll take longer than the interval between polls.
+    maxDelayMs: int(process.env.CRAWL_MAX_DELAY_MS, 15_000),
+    // Listing pages hold ~24 products where a JSON feed holds 250, so these
+    // need their own ceiling: MAX_PAGES_PER_COLLECTION would cut a scraped
+    // section off ten times sooner than the equivalent Shopify collection.
+    maxPages: int(process.env.CRAWL_MAX_PAGES, 40),
+  },
+
   twilio: {
     accountSid: str('TWILIO_ACCOUNT_SID'),
     authToken: str('TWILIO_AUTH_TOKEN'),

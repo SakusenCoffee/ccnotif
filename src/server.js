@@ -9,6 +9,7 @@ import { getFeedItems, parseTypes, renderRss } from './feed.js';
 import { getRates, ratesFor, startFx } from './fx.js';
 import { describeSmsFailure, sendSms, verificationMessage } from './notify.js';
 import { diagnoseTwilio } from './twilio-diagnose.js';
+import { adapterFor } from './platforms/index.js';
 import { pollerState, pollSite, runPoll, startPoller } from './poller.js';
 import { addSite, deleteSite, getSite, listSites, updateSite } from './sites.js';
 import {
@@ -107,6 +108,10 @@ app.get('/api/sites', async (_req, res, next) => {
         origin: s.origin,
         name: s.name,
         currency: s.currency,
+        platform: s.platform,
+        // What this platform calls the things being watched, so the UI can say
+        // "3 categories" for a Shopware store and "3 collections" for Shopify.
+        sectionNoun: adapterFor(s.platform)?.sectionNoun ?? 'collection',
         collections: s.collections,
         enabled: s.enabled,
         productCount: s.product_count,
@@ -240,7 +245,7 @@ app.get('/api/products', async (req, res, next) => {
 
     params.push(limit, offset);
     const { rows } = await query(
-      `select p.id, p.external_id, p.handle, p.title, p.vendor, p.image_url, p.price,
+      `select p.id, p.external_id, p.handle, p.url, p.title, p.vendor, p.image_url, p.price,
               p.available, p.is_preorder, p.published_at, p.became_available_at,
               p.collections, p.site_id, s.name as site_name, s.origin as site_origin,
               s.currency
@@ -267,7 +272,8 @@ app.get('/api/products', async (req, res, next) => {
     await getRates().catch(() => {});
 
     res.json({
-      products: rows.map((p) => ({ ...p, url: `${p.site_origin}/products/${p.handle}` })),
+      // url is stored per product: only Shopify's is derivable from the handle.
+      products: rows,
       totals: totals[0],
       fx: ratesFor(rows.map((p) => p.currency)),
       appName: config.appName,
