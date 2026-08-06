@@ -22,9 +22,10 @@ const TYPE_LABEL = {
 
 /**
  * Fetch feed items. `feedToken` scopes the feed to one subscriber's watchlist;
- * `siteId` scopes it to a single store. Omit both for everything.
+ * `siteId` scopes it to a single store; `sinceId` returns only events newer
+ * than one already seen. Omit them all for everything.
  */
-export async function getFeedItems({ types, feedToken, siteId, limit = 100 }) {
+export async function getFeedItems({ types, feedToken, siteId, sinceId, limit = 100 }) {
   const params = [types, limit];
   let sql = `
     select e.id, e.type, e.title, e.url, e.image_url, e.price, e.created_at,
@@ -49,7 +50,23 @@ export async function getFeedItems({ types, feedToken, siteId, limit = 100 }) {
     sql += ` and p.site_id = $${params.length}`;
   }
 
-  sql += ' order by e.created_at desc limit $2';
+  // A cursor for anything watching this endpoint rather than reading it. Ids
+  // are monotonic, so "newer than the last one I saw" is exact — filtering by
+  // timestamp would double-deliver events written inside the same clock tick,
+  // and at a poll a second that is not a rare case.
+  if (sinceId) {
+    params.push(sinceId);
+    sql += ` and e.id > $${params.length}`;
+  }
+
+  // Ordered by id, not by created_at. A poll writes all of its events in one
+  // transaction, so they share a timestamp to the microsecond, and ordering by
+  // a tied column lets Postgres return them in any order it likes. That is
+  // invisible in a feed and fatal to a cursor: "the newest row" came back as
+  // whichever tied row sorted first, so a client resuming from it re-received
+  // events it had already acted on. Ids are unique and monotonic, which is
+  // exactly what both uses need.
+  sql += ' order by e.id desc limit $2';
   const { rows } = await query(sql, params);
   return rows;
 }

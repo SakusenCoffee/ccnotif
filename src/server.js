@@ -315,8 +315,16 @@ app.get('/api/products', async (req, res, next) => {
 
 app.get('/api/events', async (req, res, next) => {
   try {
-    const items = await getFeedItems({ types: parseTypes(req.query.type), limit: 50 });
-    res.json({ events: items });
+    // `since` lets a client poll for what it has not seen instead of pulling
+    // the last 50 every few seconds and discarding most of them.
+    const sinceId = Number.parseInt(req.query.since ?? '', 10);
+    const items = await getFeedItems({
+      types: parseTypes(req.query.type),
+      sinceId: Number.isFinite(sinceId) && sinceId > 0 ? sinceId : null,
+      limit: Math.min(Number.parseInt(req.query.limit ?? '50', 10) || 50, 200),
+    });
+    // The newest id, so a caller can resume from here without re-deriving it.
+    res.json({ events: items, latestId: items[0]?.id ?? (sinceId || null) });
   } catch (err) {
     next(err);
   }
