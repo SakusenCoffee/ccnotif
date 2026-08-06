@@ -99,9 +99,9 @@
           <option value="instock">In-stock items only</option>
         </select>
         <div class="segmented" role="group" aria-label="Availability filter">
-          <button type="button" data-status="unavailable" class="active">Not buyable</button>
+          <button type="button" data-status="unavailable">Not buyable</button>
           <button type="button" data-status="available">Buyable now</button>
-          <button type="button" data-status="all">All</button>
+          <button type="button" data-status="all" class="active">All</button>
         </div>
         <select id="sort" aria-label="Sort order">
           <option value="title">A–Z</option>
@@ -138,7 +138,48 @@
     <dialog id="dialog">
       <form method="dialog" class="dialog-close"><button aria-label="Close">&times;</button></form>
 
-      <div class="pane" id="pane-phone">
+      <div class="pane" id="pane-login">
+        <h2>Sign in</h2>
+        <p class="muted">
+          An account carries your watchlist to another browser. You do not need one
+          to watch things — only to pick them up somewhere else.
+        </p>
+        <label for="login-user">Username</label>
+        <input id="login-user" type="text" autocomplete="username" autocapitalize="off" spellcheck="false" />
+        <label for="login-pass">Password</label>
+        <input id="login-pass" type="password" autocomplete="current-password" />
+        <p class="error" id="login-error" hidden></p>
+        <button class="primary wide" id="login-btn" type="button">Sign in</button>
+        <button class="linkish" id="to-register-btn" type="button">Create an account</button>
+        <button class="linkish" id="to-phone-btn" type="button">Use a phone number instead</button>
+      </div>
+
+      <div class="pane" id="pane-register" hidden>
+        <h2>Create an account</h2>
+        <p class="muted">Whatever you are already watching comes with you.</p>
+        <label for="reg-user">Username</label>
+        <input id="reg-user" type="text" autocomplete="username" autocapitalize="off" spellcheck="false" />
+        <label for="reg-pass">Password</label>
+        <input id="reg-pass" type="password" autocomplete="new-password" />
+        <p class="muted small">At least 8 characters.</p>
+        <p class="error" id="reg-error" hidden></p>
+        <button class="primary wide" id="register-btn" type="button">Create account</button>
+        <button class="linkish" id="to-login-btn" type="button">I already have one</button>
+      </div>
+
+      <div class="pane" id="pane-password" hidden>
+        <h2>Change password</h2>
+        <label for="cur-pass">Current password</label>
+        <input id="cur-pass" type="password" autocomplete="current-password" />
+        <label for="new-pass">New password</label>
+        <input id="new-pass" type="password" autocomplete="new-password" />
+        <p class="muted small">At least 8 characters. Other browsers get signed out.</p>
+        <p class="error" id="pass-error" hidden></p>
+        <button class="primary wide" id="password-btn" type="button">Change password</button>
+        <button class="linkish" id="pass-back-btn" type="button">Back</button>
+      </div>
+
+      <div class="pane" id="pane-phone" hidden>
         <h2>Where should we text you?</h2>
         <p class="muted">
           We'll send a 6-digit code to confirm the number is yours. Message and data
@@ -162,15 +203,18 @@
 
       <div class="pane" id="pane-account" hidden>
         <h2>You're all set</h2>
-        <p class="muted">Alerts go to <strong id="account-phone"></strong>.</p>
+        <p class="muted" id="account-identity"></p>
         <p class="muted small">
           Your personal feed address and keyword alerts live under
           <strong>RSS</strong>, at the top of the page.
         </p>
 
         <div class="account-buttons">
+          <button class="ghost" id="change-pass-btn" type="button">Change password</button>
           <button class="ghost" id="signout-btn" type="button">Sign out</button>
-          <button class="danger" id="unsub-btn" type="button">Stop all alerts</button>
+        </div>
+        <div class="account-buttons">
+          <button class="danger wide" id="unsub-btn" type="button">Stop all alerts</button>
         </div>
       </div>
     </dialog>

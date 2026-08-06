@@ -8,18 +8,22 @@ import { discoverSite } from './discover.js';
 import { getFeedItems, parseTypes, renderRss } from './feed.js';
 import { getRates, ratesFor, startFx } from './fx.js';
 import { describeSmsFailure, sendSms, verificationMessage } from './notify.js';
+import { PASSWORD_RULES, USERNAME_RULES, passwordProblem } from './auth.js';
 import { diagnoseTwilio } from './twilio-diagnose.js';
 import { adapterFor } from './platforms/index.js';
 import { pollerState, pollSite, runPoll, startPoller } from './poller.js';
 import { addSite, deleteSite, getSite, listSites, updateSite } from './sites.js';
 import {
   absorbAnonymous,
+  authenticate,
+  changePassword,
   checkVerification,
   clearVerificationCooldown,
   createAnonymousSubscriber,
   getWatchNotifyMap,
   getWatchedProductIds,
   normalizePhone,
+  registerAccount,
   setKeyword,
   setWatchNotify,
   setWatches,
@@ -466,6 +470,8 @@ app.get('/api/me', async (req, res, next) => {
       // anything. A session without one still carries a watchlist.
       signedIn: Boolean(subscriber.verified && subscriber.phone),
       phone: subscriber.phone,
+      username: subscriber.username ?? null,
+      hasAccount: Boolean(subscriber.password_hash),
       feedToken: subscriber.feed_token,
       keyword: subscriber.keyword ?? '',
       watches: await getWatchedProductIds(subscriber.id),
@@ -485,6 +491,119 @@ app.put('/api/watches', withSubscriber, async (req, res, next) => {
     next(err);
   }
 });
+
+// --- accounts ---------------------------------------------------------------
+//
+// A username and password is the way to reach a watchlist from another browser
+// without a phone number being involved. It sits alongside the phone rather
+// than replacing it: the phone is for texting, this is for identity.
+
+app.post(
+  '/api/register',
+  withSubscriber,
+  rateLimit({ windowMs: 60 * 60_000, max: 10, key: 'register' }),
+  async (req, res, next) => {
+    try {
+      const problem = passwordProblem(req.body?.password);
+      if (problem) return res.status(400).json({ error: 'bad_password', message: problem });
+
+      if (req.subscriber.username) {
+        return res.status(400).json({
+          error: 'already_registered',
+          message: 'This session already has an account. Sign out first.',
+        });
+      }
+
+      const result = await registerAccount(req.subscriber, req.body?.username, req.body?.password);
+      if (result.error === 'bad_username') {
+        return res.status(400).json({ error: result.error, message: USERNAME_RULES });
+      }
+      if (result.error === 'username_taken') {
+        return res.status(409).json({ error: result.error, message: 'That username is taken.' });
+      }
+
+      res.json({ ok: true, username: result.subscriber.username });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+app.post(
+  '/api/login',
+  // Deliberately tight: this is the endpoint worth guessing against.
+  rateLimit({ windowMs: 15 * 60_000, max: 10, key: 'login' }),
+  async (req, res, next) => {
+    try {
+      // Whoever is watching in this browser already, so a list built before
+      // logging in is not stranded on a session that is about to be replaced.
+      const anonymous = await subscriberBySession(req.cookies?.[config.sessionCookie]);
+
+      const result = await authenticate(req.body?.username, req.body?.password);
+      if (!result) {
+        // One message for both failures: saying which was wrong confirms
+        // whether a username exists.
+        return res.status(401).json({
+          error: 'bad_credentials',
+          message: 'That username and password do not match.',
+        });
+      }
+
+      if (anonymous && !anonymous.username && anonymous.id !== result.subscriber.id) {
+        await absorbAnonymous(anonymous.id, result.subscriber.id);
+      }
+
+      setSessionCookie(res, result.session);
+      res.json({
+        ok: true,
+        username: result.subscriber.username,
+        phone: result.subscriber.phone,
+        feedToken: result.subscriber.feed_token,
+        keyword: result.subscriber.keyword ?? '',
+        watches: await getWatchedProductIds(result.subscriber.id),
+        notify: await getWatchNotifyMap(result.subscriber.id),
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+app.put(
+  '/api/password',
+  requireSubscriber,
+  rateLimit({ windowMs: 60 * 60_000, max: 10, key: 'password' }),
+  async (req, res, next) => {
+    try {
+      const problem = passwordProblem(req.body?.newPassword);
+      if (problem) return res.status(400).json({ error: 'bad_password', message: problem });
+
+      const result = await changePassword(
+        req.subscriber,
+        req.body?.currentPassword ?? '',
+        req.body?.newPassword,
+      );
+      if (result.error === 'no_account') {
+        return res.status(400).json({
+          error: result.error,
+          message: 'This session has no username and password yet.',
+        });
+      }
+      if (result.error === 'wrong_password') {
+        return res.status(403).json({
+          error: result.error,
+          message: 'That is not your current password.',
+        });
+      }
+
+      // The old session was just invalidated; keep *this* browser signed in.
+      setSessionCookie(res, result.session);
+      res.json({ ok: true });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 /**
  * The standing alert: text me about anything matching this, watchlist or not.

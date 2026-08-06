@@ -98,6 +98,19 @@ create table if not exists subscribers (
 -- fuzzily (see src/match.js).
 alter table subscribers add column if not exists keyword text;
 
+-- An account, so a watchlist can be reached from another browser without a
+-- phone number being involved at all. Both columns are nullable: a session-only
+-- watcher has neither, a phone-verified one may have neither, and either kind
+-- can gain them later.
+alter table subscribers add column if not exists username text;
+alter table subscribers add column if not exists password_hash text;
+
+-- Case-insensitively unique, so "Jack" and "jack" cannot both be registered.
+-- Postgres does not treat NULLs as equal, so accounts without a username are
+-- unaffected by this index however many of them there are.
+create unique index if not exists subscribers_username_idx
+  on subscribers (lower(username));
+
 -- Watching no longer requires a phone number. A visitor who ticks something
 -- gets a row here with no phone at all, identified only by their session, and
 -- attaches a number later if and when they want texts. The unique index still

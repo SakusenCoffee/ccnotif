@@ -3,6 +3,7 @@ import { parsePhoneNumberFromString } from 'libphonenumber-js';
 import { config } from './config.js';
 import { query } from './db.js';
 import { parseTerms } from './match.js';
+import { hashPassword, normalizeUsername, verifyPassword } from './auth.js';
 
 export function normalizePhone(raw) {
   if (!raw) return null;
@@ -241,6 +242,79 @@ export async function setKeyword(subscriberId, keyword) {
     [subscriberId, value],
   );
   return { keyword: rows[0]?.keyword ?? null, terms: parseTerms(value ?? '') };
+}
+
+/**
+ * Attach an account to whoever is here. An anonymous watcher registering keeps
+ * the row and the list they already built, rather than starting again.
+ */
+export async function registerAccount(subscriber, rawUsername, rawPassword) {
+  const username = normalizeUsername(rawUsername);
+  if (!username) return { error: 'bad_username' };
+
+  const { rows: taken } = await query(
+    'select id from subscribers where lower(username) = $1',
+    [username],
+  );
+  if (taken.length) return { error: 'username_taken' };
+
+  const passwordHash = await hashPassword(rawPassword);
+  const { rows } = await query(
+    `update subscribers set username = $2, password_hash = $3
+      where id = $1
+      returning *`,
+    [subscriber.id, username, passwordHash],
+  );
+  return { subscriber: rows[0] };
+}
+
+/**
+ * Check a username and password. Both failures answer the same way: saying
+ * which of the two was wrong tells someone guessing that a username exists.
+ */
+export async function authenticate(rawUsername, rawPassword) {
+  const username = normalizeUsername(rawUsername);
+  if (!username) return null;
+
+  const { rows } = await query(
+    'select * from subscribers where lower(username) = $1',
+    [username],
+  );
+  const subscriber = rows[0];
+  // Verify against a dummy hash when the account does not exist, so a missing
+  // username does not answer measurably faster than a wrong password.
+  const ok = await verifyPassword(
+    rawPassword,
+    subscriber?.password_hash ??
+      'scrypt$16384$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAA==',
+  );
+  if (!subscriber || !ok) return null;
+
+  const session = token(32);
+  await query('update subscribers set session_token = $2, unsubscribed_at = null where id = $1', [
+    subscriber.id,
+    session,
+  ]);
+  return { subscriber, session };
+}
+
+/** Change a password, having first proved you know the current one. */
+export async function changePassword(subscriber, currentPassword, newPassword) {
+  if (!subscriber.password_hash) return { error: 'no_account' };
+  if (!(await verifyPassword(currentPassword, subscriber.password_hash))) {
+    return { error: 'wrong_password' };
+  }
+
+  const passwordHash = await hashPassword(newPassword);
+  // A new session token as well: changing a password is how you lock out
+  // somebody else who has yours, which does nothing if their session survives.
+  const session = token(32);
+  await query('update subscribers set password_hash = $2, session_token = $3 where id = $1', [
+    subscriber.id,
+    passwordHash,
+    session,
+  ]);
+  return { session };
 }
 
 export async function unsubscribe(subscriberId) {

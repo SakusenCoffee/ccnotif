@@ -168,7 +168,7 @@ function renderTray() {
 }
 
 function renderAccount() {
-  $('#account-btn').textContent = state.signedIn ? state.phone : 'Sign in';
+  $('#account-btn').textContent = state.username ?? (state.signedIn ? state.phone : 'Sign in');
 }
 
 function renderSiteFilter() {
@@ -250,6 +250,8 @@ async function loadMe() {
   state.feedToken = me.feedToken ?? null;
   state.keyword = me.keyword ?? '';
   state.notify = me.notify ?? {};
+  state.username = me.username ?? null;
+  state.hasAccount = Boolean(me.hasAccount);
   if (me.watches) {
     state.saved = new Set(me.watches);
     state.selected = new Set(me.watches);
@@ -285,14 +287,21 @@ async function saveWatches() {
 const dialog = $('#dialog');
 
 function openDialog(pane) {
-  for (const id of ['phone', 'code', 'account']) {
+  for (const id of ['login', 'register', 'password', 'phone', 'code', 'account']) {
     $(`#pane-${id}`).hidden = id !== pane;
   }
   if (pane === 'account') {
-    $('#account-phone').textContent = state.phone ?? '';
+    const bits = [];
+    if (state.username) bits.push(`Signed in as ${state.username}`);
+    if (state.phone) bits.push(`alerts go to ${state.phone}`);
+    $('#account-identity').textContent = bits.length
+      ? `${bits.join(' · ')}.`
+      : 'Watching in this browser only.';
+    $('#change-pass-btn').hidden = !state.hasAccount;
   }
-  $('#phone-error').hidden = true;
-  $('#code-error').hidden = true;
+  for (const id of ['#phone-error', '#code-error', '#login-error', '#reg-error', '#pass-error']) {
+    $(id).hidden = true;
+  }
   if (!dialog.open) dialog.showModal();
   setTimeout(() => $(`#pane-${pane}`).querySelector('input')?.focus(), 40);
 }
@@ -392,6 +401,8 @@ function resetToSignedOut() {
   state.keyword = '';
   state.watchedOnly = false;
   state.notify = {};
+  state.username = null;
+  state.hasAccount = false;
   state.saved = new Set();
   state.selected = new Set();
   renderAccount();
@@ -585,7 +596,92 @@ $('#unsub-btn').addEventListener('click', async () => {
   resetToSignedOut();
 });
 
-$('#account-btn').addEventListener('click', () => openDialog(state.signedIn ? 'account' : 'phone'));
+$('#account-btn').addEventListener('click', () =>
+  openDialog(state.signedIn || state.username ? 'account' : 'login'),
+);
+
+// --- accounts ---------------------------------------------------------------
+
+/** Adopt whatever the server just told us about who we are. */
+function adoptSession(data) {
+  state.signedIn = Boolean(data.phone);
+  state.phone = data.phone ?? null;
+  state.username = data.username ?? null;
+  state.hasAccount = true;
+  state.feedToken = data.feedToken ?? state.feedToken;
+  state.keyword = data.keyword ?? '';
+  state.notify = data.notify ?? {};
+  state.saved = new Set(data.watches ?? []);
+  state.selected = new Set(state.saved);
+}
+
+$('#to-register-btn').addEventListener('click', () => openDialog('register'));
+$('#to-login-btn').addEventListener('click', () => openDialog('login'));
+$('#to-phone-btn').addEventListener('click', () => openDialog('phone'));
+$('#pass-back-btn').addEventListener('click', () => openDialog('account'));
+$('#change-pass-btn').addEventListener('click', () => openDialog('password'));
+
+$('#login-btn').addEventListener('click', async () => {
+  try {
+    const data = await api('/api/login', {
+      method: 'POST',
+      body: { username: $('#login-user').value, password: $('#login-pass').value },
+    });
+    // Never leave a password sitting in the DOM once it has been used.
+    $('#login-pass').value = '';
+    adoptSession(data);
+    renderAccount();
+    renderGrid();
+    renderTray();
+    dialog.close();
+  } catch (err) {
+    showError('#login-error', err.data?.message ?? err.message);
+  }
+});
+
+$('#register-btn').addEventListener('click', async () => {
+  try {
+    await api('/api/register', {
+      method: 'POST',
+      body: { username: $('#reg-user').value, password: $('#reg-pass').value },
+    });
+    $('#reg-pass').value = '';
+    await loadMe();
+    renderAccount();
+    openDialog('account');
+  } catch (err) {
+    showError('#reg-error', err.data?.message ?? err.message);
+  }
+});
+
+$('#password-btn').addEventListener('click', async () => {
+  try {
+    await api('/api/password', {
+      method: 'PUT',
+      body: { currentPassword: $('#cur-pass').value, newPassword: $('#new-pass').value },
+    });
+    $('#cur-pass').value = '';
+    $('#new-pass').value = '';
+    openDialog('account');
+  } catch (err) {
+    showError('#pass-error', err.data?.message ?? err.message);
+  }
+});
+
+// Enter submits whichever form you are in.
+for (const [field, button] of [
+  ['#login-pass', '#login-btn'],
+  ['#login-user', '#login-btn'],
+  ['#reg-pass', '#register-btn'],
+  ['#new-pass', '#password-btn'],
+]) {
+  $(field).addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      $(button).click();
+    }
+  });
+}
 
 // --- controls ---------------------------------------------------------------
 
