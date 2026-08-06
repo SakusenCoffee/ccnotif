@@ -20,8 +20,7 @@
         </div>
         <div class="topbar-actions">
           <button class="ghost" id="stores-btn" type="button">Stores</button>
-          <button class="ghost" id="watched-btn" type="button" title="Only the products you watch">Watched</button>
-          <button class="ghost" id="feed-btn" type="button" title="Updates, alerts and feed addresses">RSS</button>
+
           <button class="ghost" id="account-btn" type="button">Sign in</button>
         </div>
       </div>
@@ -38,6 +37,12 @@
         <pre id="setup-code">DATABASE_URL=${{Postgres.DATABASE_URL}}</pre>
         <button class="ghost" id="setup-retry" type="button">Check again</button>
       </section>
+
+      <nav class="tabs" id="tabs" aria-label="Views">
+        <button type="button" data-view="preorders" class="active">Pre-orders</button>
+        <button type="button" data-view="watched">Watched</button>
+        <button type="button" data-view="feed">Updates &amp; alerts</button>
+      </nav>
 
       <section class="intro">
         <p>

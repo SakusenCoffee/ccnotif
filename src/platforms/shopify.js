@@ -13,6 +13,13 @@ import { detectPreorder, rankCollections, scoreCollection } from './signals.js';
  * store to start refusing all of them.
  */
 
+/** Statuses that mean "you are asking too often" or "I am overloaded". */
+const RATE_LIMIT_STATUSES = new Set([429, 430, 500, 502, 503, 504]);
+
+export function isRateLimited(err) {
+  return RATE_LIMIT_STATUSES.has(err?.status);
+}
+
 const PAGE_SIZE = 250;
 const COLLECTION_PAGE_SIZE = 250;
 const MAX_COLLECTION_PAGES = 8;
@@ -184,8 +191,26 @@ async function fetchProducts(site, { signal } = {}) {
         if (products.length < PAGE_SIZE) break;
       }
     } catch (err) {
-      // One bad collection shouldn't stop the whole site.
       errors.push({ collection, message: err.message });
+
+      // A rate-limit answer is the store saying stop, and the right response is
+      // to stop — not to ask about the remaining ten sections and collect ten
+      // more refusals. Doing that turned one poll into eleven rejected
+      // requests, which is how a temporary limit becomes a lasting block.
+      if (isRateLimited(err)) {
+        console.warn(
+          `[shopify] ${site.origin} is rate limiting us (${err.status}); ` +
+            'abandoning the rest of this poll',
+        );
+        return {
+          products: [...byId.values()],
+          errors,
+          rateLimited: true,
+          retryAfterMs: err.retryAfterMs ?? null,
+        };
+      }
+
+      // Anything else is one bad section, which shouldn't stop the site.
       console.error(`[shopify] ${site.origin} "${collection}" failed: ${err.message}`);
     }
   }

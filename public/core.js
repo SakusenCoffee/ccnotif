@@ -13,7 +13,7 @@ export const state = {
   alerts: [],
   match: '',
   feedEvents: [],
-  watchedOnly: false,
+  view: 'preorders',
   notify: {},
   username: null,
   hasAccount: false,

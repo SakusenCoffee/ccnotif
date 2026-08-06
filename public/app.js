@@ -1,7 +1,5 @@
 import { $, $$, api, convertedMoney, money, state } from './core.js';
 
-// Which of the two views the page is showing: the pre-order grid, or Updates.
-let showingFeed = false;
 import { initStores, openStores, reloadSites } from './stores.js';
 
 // --- rendering --------------------------------------------------------------
@@ -82,7 +80,7 @@ function card(product) {
   // In the Watched view each card carries its own texting switch, because that
   // is the decision this view exists to let you make. It is per product: you
   // can follow a dozen things and be woken by one.
-  if (state.watchedOnly) {
+  if ((state.view === 'watched')) {
     // The same two switches a standing alert has, for the same reason: telling
     // you about a restock and acting on it are different decisions, and a
     // watched product may deserve one without the other.
@@ -169,19 +167,29 @@ function card(product) {
  * Which of the two views is on screen. Both the grid render and the Updates
  * toggle route through here, so neither can quietly undo the other's hiding.
  */
+/**
+ * Which of the three views is on screen.
+ *
+ * One variable rather than a pair of booleans, because two flags describing one
+ * choice can disagree — and did: leaving the Watched view meant clicking the
+ * button you were already on, since nothing else could turn it off.
+ */
 function applyView() {
   // With no stores there is nothing to browse, filter, or explain.
   const noStores = state.sites.length === 0;
-  const feed = showingFeed;
+  const feed = state.view === 'feed';
+  const grid = !feed;
 
   $('#feed-view').hidden = !feed;
-  $('#grid').hidden = feed;
-  $('.intro').hidden = noStores || feed;
-  $('.controls').hidden = noStores || feed;
-  $('#status').hidden = noStores || feed;
-  $('#empty').hidden = !noStores || feed;
-  $('#feed-btn').classList.toggle('active', feed);
-  $('#watched-btn').classList.toggle('active', state.watchedOnly && !feed);
+  $('#grid').hidden = !grid;
+  $('.intro').hidden = noStores || !grid;
+  $('.controls').hidden = noStores || !grid;
+  $('#status').hidden = noStores || !grid;
+  $('#empty').hidden = !noStores || !grid;
+
+  for (const button of $$('#tabs button')) {
+    button.classList.toggle('active', button.dataset.view === state.view);
+  }
 }
 
 function renderGrid() {
@@ -192,10 +200,10 @@ function renderGrid() {
   renderHeader();
 
   const shown = state.products.length;
-  const scope = state.watchedOnly ? ' you watch' : '';
+  const scope = (state.view === 'watched') ? ' you watch' : '';
   $('#status').textContent = shown
     ? `${shown} product${shown === 1 ? '' : 's'}${scope}${state.q ? ` matching “${state.q}”` : ''}`
-    : state.watchedOnly
+    : (state.view === 'watched')
       ? 'Nothing on your watchlist matches those filters.'
       : 'Nothing matches those filters.';
 }
@@ -213,7 +221,7 @@ function renderTray() {
   // offering to save a change nobody had made. And it has no purpose at all in
   // the Watched view, where the list *is* the saved state and each row carries
   // its own Remove.
-  tray.hidden = !changed || state.watchedOnly;
+  tray.hidden = !changed || (state.view === 'watched');
 
   const added = [...state.selected].filter((id) => !state.saved.has(id)).length;
   const removed = [...state.saved].filter((id) => !state.selected.has(id)).length;
@@ -285,7 +293,7 @@ async function loadProducts() {
   });
   if (state.q) params.set('q', state.q);
   if (state.siteId) params.set('siteId', state.siteId);
-  if (state.watchedOnly) params.set('watched', '1');
+  if ((state.view === 'watched')) params.set('watched', '1');
 
   $('#status').textContent = 'Loading…';
   try {
@@ -456,7 +464,6 @@ function resetToSignedOut() {
   state.phone = null;
   state.feedToken = null;
   state.alerts = [];
-  state.watchedOnly = false;
   state.notify = {};
   state.username = null;
   state.hasAccount = false;
@@ -629,22 +636,29 @@ async function loadFeed() {
 }
 
 /** Swap between the pre-order grid and the updates list. */
-function showFeed(on) {
-  showingFeed = on;
+async function showView(view) {
+  if (view === state.view) return;
+  const wasGrid = state.view !== 'feed';
+  state.view = view;
   applyView();
-  if (on) {
+
+  if (view === 'feed') {
     syncFeedControls();
     loadFeed();
+    return;
   }
+
+  // Pre-orders and Watched are the same grid with a different filter, so
+  // switching between them needs a reload; arriving from the feed does not if
+  // the filter has not changed.
+  if (!wasGrid || view === 'watched' || state.view === 'preorders') await loadProducts();
 }
 
-// The watchlist as a view over the same grid, so the store dropdown, search
-// and sort keep working — a separate screen would have had to grow its own.
-$('#watched-btn').addEventListener('click', async () => {
-  state.watchedOnly = !state.watchedOnly;
-  if (showingFeed) showFeed(false);
-  applyView();
-  await loadProducts();
+// Watched is a view over the same grid, so the store dropdown, search and sort
+// keep working across it — a separate screen would have had to grow its own.
+$('#tabs').addEventListener('click', (e) => {
+  const view = e.target.closest('button')?.dataset.view;
+  if (view) showView(view);
 });
 
 $('#feed-scope').addEventListener('click', (e) => {
@@ -654,8 +668,7 @@ $('#feed-scope').addEventListener('click', (e) => {
   syncFeedControls();
 });
 
-$('#feed-btn').addEventListener('click', () => showFeed(!showingFeed));
-$('#feed-back-btn').addEventListener('click', () => showFeed(false));
+$('#feed-back-btn').addEventListener('click', () => showView('preorders'));
 
 // --- the buyer's MATCH line -------------------------------------------------
 //

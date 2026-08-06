@@ -28,14 +28,26 @@ const backoff = new Map(); // siteId -> { until, failures }
 // wrapped in context about which section it came from.
 const RATE_LIMITED = /\bresponded (429|430|500|502|503|504)\b|too many requests/i;
 
-function noteFailure(site, message) {
-  if (!RATE_LIMITED.test(message)) return;
+/**
+ * Rest a store that is pushing back.
+ *
+ * `retryAfterMs` is the store's own figure when it gave one — honouring that is
+ * both quicker to recover from and less likely to deepen a block than a guess.
+ * Otherwise the wait doubles per consecutive failure.
+ */
+function noteFailure(site, message, retryAfterMs = null) {
+  if (retryAfterMs === null && !RATE_LIMITED.test(message)) return;
+
   const previous = backoff.get(site.id)?.failures ?? 0;
   const failures = previous + 1;
-  const wait = Math.min(BACKOFF_BASE_MS * 2 ** (failures - 1), BACKOFF_MAX_MS);
+  const grown = Math.min(BACKOFF_BASE_MS * 2 ** (failures - 1), BACKOFF_MAX_MS);
+  // Never shorter than what was asked for, and never longer than the ceiling.
+  const wait = Math.min(Math.max(grown, retryAfterMs ?? 0), BACKOFF_MAX_MS);
+
   backoff.set(site.id, { until: Date.now() + wait, failures });
   console.warn(
-    `[poll] ${site.name} asked us to slow down (${message}); backing off ${Math.round(wait / 1000)}s`,
+    `[poll] ${site.name} is rate limiting us; resting ${Math.round(wait / 1000)}s` +
+      (retryAfterMs ? ' (its own Retry-After)' : ` (attempt ${failures})`),
   );
 }
 
@@ -63,7 +75,19 @@ export const pollerState = {
  * crash mid-write can't leave us having recorded a restock we never sent.
  */
 async function syncSite(site) {
-  const { products: fetched, errors } = await fetchSiteProducts(site);
+  const { products: fetched, errors, rateLimited, retryAfterMs } = await fetchSiteProducts(site);
+
+  // The store asked us to stop. Say so in a form the backoff can act on,
+  // carrying its own Retry-After when it gave one.
+  if (rateLimited && !fetched.length) {
+    // Short and in plain words. This lands in the store list, where eleven
+    // rejected URLs told the reader nothing they could act on and buried the
+    // one fact that mattered — the store is refusing us, and we are waiting.
+    throw Object.assign(
+      new Error('This store is rate limiting us. Polling pauses and resumes on its own.'),
+      { rateLimited: true, retryAfterMs: retryAfterMs ?? null },
+    );
+  }
 
   // Postgres refuses an ON CONFLICT statement whose source rows collide with
   // each other, so a duplicate external id would fail the whole write rather
@@ -79,10 +103,13 @@ async function syncSite(site) {
     // one. So a store answering 429 to every request looked like an ordinary
     // empty result, no backoff was applied, and it went on being polled at full
     // speed indefinitely: exactly the runaway the backoff exists to prevent.
+    // Enough to diagnose, not so much that it fills the page. The first couple
+    // of failures are almost always the same failure repeated.
     const detail = errors.length
-      ? errors.map((e) => `${e.collection}: ${e.message}`).join('; ')
+      ? errors.slice(0, 2).map((e) => `${e.collection}: ${e.message}`).join('; ') +
+        (errors.length > 2 ? ` (and ${errors.length - 2} more)` : '')
       : 'unknown cause';
-    throw new Error(`no products returned (${detail})`);
+    throw new Error(`no products returned — ${detail}`);
   }
 
   return transaction(async (client) => {
@@ -470,8 +497,8 @@ export async function pollSite(site) {
       site.id,
       err.message,
     ]).catch(() => {});
-    noteFailure(site, err.message);
-    console.error(`[poll] ${site.name} failed: ${err.message}`);
+    noteFailure(site, err.message, err.retryAfterMs ?? null);
+    if (!err.rateLimited) console.error(`[poll] ${site.name} failed: ${err.message}`);
     return {
       site: site.name,
       origin: site.origin,

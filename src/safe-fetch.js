@@ -139,15 +139,41 @@ export async function safeFetch(urlString, { headers = {}, signal } = {}) {
     const text = await res.text();
     if (text.length > MAX_BYTES) throw new Error('The response was too large.');
 
-    return { ok: res.ok, status: res.status, url: current, text };
+    return {
+      ok: res.ok,
+      status: res.status,
+      url: current,
+      text,
+      // How long the server asked us to wait, when it says. A store answering
+      // 429 usually names a figure, and honouring it is both faster to recover
+      // from and less likely to deepen the block than a guess.
+      retryAfterMs: parseRetryAfter(res.headers.get('retry-after')),
+    };
   }
 
   throw new Error('Too many redirects.');
 }
 
+/** Retry-After is either a number of seconds or an HTTP date. */
+function parseRetryAfter(value) {
+  if (!value) return null;
+  const seconds = Number.parseInt(value, 10);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  const when = Date.parse(value);
+  return Number.isFinite(when) ? Math.max(0, when - Date.now()) : null;
+}
+
 export async function safeFetchJson(url, options) {
   const res = await safeFetch(url, options);
-  if (!res.ok) throw new Error(`${res.url} responded ${res.status}`);
+  if (!res.ok) {
+    // The status travels on the error, not only inside its text. Callers need
+    // to tell "this one collection is broken" from "the store is telling us to
+    // stop", and re-reading it out of a message is how that gets missed.
+    throw Object.assign(new Error(`${res.url} responded ${res.status}`), {
+      status: res.status,
+      retryAfterMs: res.retryAfterMs,
+    });
+  }
   try {
     return JSON.parse(res.text);
   } catch {
