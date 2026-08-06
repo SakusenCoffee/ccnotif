@@ -66,6 +66,23 @@ One-Piece and OP; `OP-17` finds OP-17 and OP17 but never OP-18.
 Watched products carry the same two switches, so a single product can be armed
 without setting up a term for it.
 
+## The watch agent
+
+`agent/watch-agent.js` is a small process that watches for matches your alerts
+armed with Auto-buy and opens each in your browser. It runs on Linux, Windows
+and macOS, needs only what ships with Node, and replaces the listener that used
+to live in a browser tab — a userscript exists only while its tab is loaded and
+the browser is running, so closing the browser meant silently not listening.
+
+The handover is a single-use nonce: the server mints one when the agent claims a
+match, the agent puts it in the URL fragment, and the userscript redeems it. The
+server destroys it on redemption, so a kept link cannot arm twice and an
+invented one matches nothing. Without a valid nonce the script watches and
+notifies but never buys, which is what stops it acting on a page you merely
+browsed to.
+
+See `agent/README.md` for setup, systemd and Task Scheduler.
+
 ## The buyer's MATCH line
 
 A generated, copyable line built from every alert term you have saved plus the

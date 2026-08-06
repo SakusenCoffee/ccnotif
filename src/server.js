@@ -33,6 +33,7 @@ import {
   startVerification,
   subscriberByFeedToken,
   subscriberBySession,
+  token,
   unsubscribe,
 } from './subscribers.js';
 
@@ -75,6 +76,10 @@ setInterval(() => {
 // short enough to be nowhere near any proxy's idle timeout.
 const SEED_WAIT_MS = 12_000;
 const PENDING = Symbol('seeding');
+
+// How long an authority to buy stays good for. The agent opens the tab at once,
+// so this only has to cover a slow page load and a slow reader.
+const TICKET_TTL_MS = 10 * 60_000;
 
 /**
  * Get the session's subscriber, creating an anonymous one if there isn't a
@@ -134,6 +139,7 @@ const PUBLIC_PATHS = new Set([
   '/login',
   '/login.html',
   '/api/login',
+  '/api/tickets/claim',
   '/healthz',
   '/readyz',
   '/twilio/inbound',
@@ -908,22 +914,102 @@ app.get('/api/dispatch', requireSubscriber, async (req, res, next) => {
   }
 });
 
+/**
+ * Take a set of matches off the queue and get, for each, a URL that arms the
+ * buyer script.
+ *
+ * The nonce in that URL is the authority to act. It is minted here rather than
+ * in the browser because the thing opening the tab is an agent outside it, and
+ * it is single-use and short-lived because it is doing the job a session would
+ * otherwise do — a link that stays armed is a link that buys something the
+ * second time it is opened.
+ */
 app.post('/api/dispatch/claim', requireSubscriber, async (req, res, next) => {
   try {
     const ids = Array.isArray(req.body?.eventIds)
       ? req.body.eventIds.map(Number).filter(Number.isFinite)
       : [];
-    if (!ids.length) return res.json({ ok: true, claimed: 0 });
+    if (!ids.length) return res.json({ ok: true, claimed: 0, tickets: [] });
 
-    const { rowCount } = await query(
-      'delete from dispatches where subscriber_id = $1 and event_id = any($2::bigint[])',
+    const { rows: claimed } = await query(
+      `delete from dispatches d
+        where d.subscriber_id = $1 and d.event_id = any($2::bigint[])
+        returning d.event_id, d.term`,
       [req.subscriber.id, ids],
     );
-    res.json({ ok: true, claimed: rowCount });
+    if (!claimed.length) return res.json({ ok: true, claimed: 0, tickets: [] });
+
+    const { rows: details } = await query(
+      `select e.id as event_id, e.title, e.url, e.price
+         from events e where e.id = any($1::bigint[])`,
+      [claimed.map((c) => c.event_id)],
+    );
+    const byEvent = new Map(details.map((d) => [d.event_id, d]));
+
+    const tickets = [];
+    for (const { event_id, term } of claimed) {
+      const detail = byEvent.get(event_id);
+      if (!detail) continue;
+      const nonce = token(24);
+      await query(
+        `insert into tickets (nonce, subscriber_id, event_id, url, title, price, term)
+           values ($1,$2,$3,$4,$5,$6,$7)`,
+        [nonce, req.subscriber.id, event_id, detail.url, detail.title, detail.price, term],
+      );
+      tickets.push({
+        eventId: event_id,
+        term,
+        title: detail.title,
+        price: detail.price,
+        url: detail.url,
+        // What the agent actually opens. The fragment survives the navigation
+        // and is not sent to the store in the request.
+        armedUrl: `${detail.url}#pwbuy=${nonce}`,
+      });
+    }
+
+    res.json({ ok: true, claimed: claimed.length, tickets });
   } catch (err) {
     next(err);
   }
 });
+
+/**
+ * Redeem a ticket. Deliberately unauthenticated: the buyer script runs on a
+ * storefront page, and requiring a session here would mean sending this app's
+ * cookie cross-site — which would mean relaxing SameSite for every request, a
+ * bad trade for one endpoint. The nonce is unguessable, single-use and expires,
+ * so holding one is the proof.
+ */
+app.post(
+  '/api/tickets/claim',
+  rateLimit({ windowMs: 60_000, max: 60, key: 'ticket-claim' }),
+  async (req, res, next) => {
+    try {
+      const nonce = String(req.body?.nonce ?? '');
+      if (!/^[A-Za-z0-9_-]{16,64}$/.test(nonce)) {
+        return res.status(400).json({ error: 'bad_nonce' });
+      }
+
+      // Expired tickets are swept here rather than on a timer: the table only
+      // grows when matches are handed out, so this is the moment it matters.
+      await query(
+        `delete from tickets where created_at < now() - ($1 || ' milliseconds')::interval`,
+        [String(TICKET_TTL_MS)],
+      ).catch(() => {});
+
+      const { rows } = await query(
+        'delete from tickets where nonce = $1 returning url, title, price, term',
+        [nonce],
+      );
+      if (!rows.length) return res.status(404).json({ error: 'no_ticket' });
+
+      res.json({ ok: true, ...rows[0] });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 /**
  * Notifications for one watched product. Turning it *on* is the only place a

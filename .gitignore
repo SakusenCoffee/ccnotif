@@ -9,3 +9,8 @@ npm-debug.log*
 # Purchase automation. Local only — this repo is public, and an auto-checkout
 # script is neither something to publish nor something to hand a stranger.
 userscript/
+agent/
+
+# ...but the agent's own credentials never belong in a repo at all, public or
+# not, so this stays here in case agent/ is ever un-ignored.
+agent/.env

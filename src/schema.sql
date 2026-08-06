@@ -210,6 +210,28 @@ create table if not exists events (
 
 create index if not exists events_created_idx on events (created_at desc);
 create index if not exists events_product_idx on events (product_id, created_at desc);
+-- Authority to buy, issued when a match is handed to the agent.
+--
+-- This began inside the userscript's own storage, which worked only because the
+-- script both opened the tab and checked it. An agent running outside the
+-- browser cannot write there, so the record moves here: the agent is given a
+-- nonce, puts it in the URL fragment, and the script redeems it against this
+-- table. Possessing an unguessable, single-use, short-lived nonce is the proof —
+-- no session is involved, which is what lets the script redeem it from a
+-- storefront page without the app relaxing its cookie policy.
+create table if not exists tickets (
+  nonce         text        primary key,
+  subscriber_id bigint      not null references subscribers (id) on delete cascade,
+  event_id      bigint      references events (id) on delete set null,
+  url           text        not null,
+  title         text,
+  price         numeric(10, 2),
+  term          text,
+  created_at    timestamptz not null default now()
+);
+
+create index if not exists tickets_created_idx on tickets (created_at);
+
 -- What the buyer userscript has already been handed, so a restock is offered
 -- once rather than every time the script asks.
 create table if not exists dispatches (
