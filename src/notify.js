@@ -156,6 +156,23 @@ export function restockMessage(event, feedToken, currency = 'USD') {
   );
 }
 
+/**
+ * A product matched someone's standing alert. It says which term matched and
+ * whether the thing can be bought right now, because unlike a watchlist alert
+ * the recipient has never seen this product before and has no context for it.
+ */
+export function keywordMessage(event, feedToken, currency = 'USD', term = null) {
+  const formatted = formatPrice(event.price, currency);
+  const price = formatted ? ` — ${formatted}` : '';
+  const lead = event.type === 'restock' ? 'IN STOCK' : 'NEW';
+  const because = term ? ` (matched "${truncate(term, 30)}")` : '';
+  return (
+    `${lead}: ${truncate(event.title, 80)}${price}${because}\n` +
+    `${event.url}\n\n` +
+    `Manage alerts: ${config.publicUrl}/?t=${feedToken}\nReply STOP to end.`
+  );
+}
+
 function truncate(str, max) {
   return str.length <= max ? str : `${str.slice(0, max - 1)}…`;
 }

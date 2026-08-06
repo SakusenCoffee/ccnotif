@@ -9,6 +9,7 @@ export const state = {
   signedIn: false,
   phone: null,
   feedToken: null,
+  keyword: '',
   status: 'unavailable',
   sort: 'title',
   siteId: '',

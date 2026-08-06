@@ -55,13 +55,20 @@ export const config = {
     : null,
 
   poll: {
-    intervalMs: int(process.env.POLL_INTERVAL_SECONDS, 300) * 1000,
+    // As fast as the stores will allow. A tick that lands while the previous
+    // run is still going is dropped, so this is a floor on the gap between
+    // polls, not a promise of one per second — a full sweep simply takes as
+    // long as it takes, and the next one starts straight after.
+    intervalMs: int(process.env.POLL_INTERVAL_SECONDS, 1) * 1000,
     enabled: bool(process.env.POLL_ENABLED, true),
     // Don't text the same person about the same product twice inside this
     // window. Shopify inventory flaps; this keeps a flapping product from
     // becoming a stream of texts.
     cooldownHours: int(process.env.NOTIFY_COOLDOWN_HOURS, 24),
     maxPages: int(process.env.MAX_PAGES_PER_COLLECTION, 10),
+    // How many stores are read at once, so a slow scraped store doesn't hold
+    // up the fast ones. Kept below the database pool size (8).
+    concurrency: Math.max(1, int(process.env.POLL_CONCURRENCY, 4)),
   },
 
   // Stores with no JSON feed are read by fetching listing pages, which is far

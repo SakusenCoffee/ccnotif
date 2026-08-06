@@ -95,6 +95,32 @@ Merchant WestCity (NZD, 179), and Miniature Market (Shopware, USD, 109 categorie
 A store on a platform no adapter recognises is rejected with a message saying so,
 rather than a generic failure.
 
+### Polling pace
+
+**Each store polls once a second, on its own loop.** Not one shared clock: a
+sweep can only go as fast as its slowest member, so with one JSON-feed store
+answering in 700ms and one scraped store taking twenty seconds, a shared timer
+would poll *both* every twenty seconds and asking for a poll a second would buy
+nothing. Given their own loops, measured over 45s: Hobbiesville 26 polls,
+Miniature Market 1 — each going as fast as it can, neither waiting on the other.
+
+Three things bound the real rate, none of them the timer:
+
+- **The store's own limits.** A store answering 429/503 is rested with an
+  exponential backoff from 30s to 15 minutes, cleared on the next good response.
+  Without this, polling continuously just gets the app blocked and *every* alert
+  stops — which is far worse than being a few seconds late.
+- **robots.txt**, for scraped stores. Miniature Market asks for 10 seconds
+  between requests and gets it; a one-second setting does not override a third
+  party's stated rule. Expect a scraped store to poll on the order of minutes.
+- **The database.** A 250-product store polled every second used to mean 250
+  round trips a second; the catalogue is now written in a single statement.
+
+Be aware of what a one-second default means for a JSON-feed store: it is a
+sustained request every second or so to someone else's shop, indefinitely. The
+backoff keeps that from becoming a ban, but if a store's operator objects, the
+honest fix is `POLL_INTERVAL_SECONDS`, not a workaround.
+
 ### Crawl budget
 
 A scraped store costs one request per listing page, every poll, forever — enough
@@ -262,6 +288,48 @@ it from there to sign in.
 The personal token is shown in the account dialog after you verify, and is linked
 from every alert text. It's a bearer token — anyone with the URL sees that
 watchlist (but can't change it or see the phone number).
+
+**Opened in a browser, a feed renders as a readable page.** Handed raw RSS, a
+browser shows a wall of angle brackets or offers to download it, and the
+reasonable conclusion is that the link is broken. `public/feed.xsl` is an XSLT
+stylesheet the browser applies to the very same document: product images, prices,
+store names and badges, plus a short explanation of what the URL is for, since
+someone who clicked "RSS" may not know. Feed readers ignore the stylesheet and
+parse the XML underneath, so one URL serves both without content negotiation or a
+second endpoint to keep in step.
+
+Items also carry `media:thumbnail` and a few `pw:*` fields (product, store,
+price, label). The stylesheet builds the page from those rather than picking
+apart the HTML in `description` — and a reader that understands `media:thumbnail`
+gets a real image out of it too.
+
+## Keyword alerts
+
+The watchlist requires having already found a product. The text field in the
+account dialog is the standing version: **text me about anything matching this**,
+whether or not I have ever seen it. It fires on both kinds of event, because a
+newly listed pre-order is usually what you wanted to hear about, and earlier than
+its restock would tell you.
+
+Matching is deliberately loose, because stores are inconsistent in a few
+predictable ways — `src/match.js`:
+
+| Typed | Also matches | Why |
+| --- | --- | --- |
+| `one piece` | One Piece, OnePiece, one-piece | the separator between words varies |
+| `one piece` | OP, OP-11 | popular lines get abbreviated to initials |
+| `pokemon` | Pokémon | accents get folded |
+| `magic the gathering` | MTG | same initialism rule |
+
+Several terms can be separated by commas. What it will **not** do is match inside
+a longer word: the `op` in "Optic" or "Topps" is not a One Piece product, and
+this feature sends texts — a false positive costs someone a message at whatever
+hour it fires. Every alternative is bounded by "not adjacent to another letter or
+digit", and typed input is regex-escaped, so a `*` matches an asterisk rather
+than everything.
+
+Alerts respect the same per-product cooldown as watchlist texts, and a product
+you already watch won't text you twice for the same event.
 
 ## Design decisions worth knowing
 

@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomInt, timingSafeEqual } from 'node:crypto
 import { parsePhoneNumberFromString } from 'libphonenumber-js';
 import { config } from './config.js';
 import { query } from './db.js';
+import { parseTerms } from './match.js';
 
 export function normalizePhone(raw) {
   if (!raw) return null;
@@ -160,10 +161,29 @@ export async function setWatches(subscriberId, productIds) {
   return ids;
 }
 
+/**
+ * Set (or clear) someone's standing alert. Stored as typed so it can be shown
+ * back to them unchanged; the fuzzy expansion happens at match time.
+ */
+export async function setKeyword(subscriberId, keyword) {
+  const raw = String(keyword ?? '').trim().slice(0, 200);
+  // Terms that survive parsing are what will actually fire. Storing text that
+  // matches nothing would leave someone believing an alert is set when it is
+  // not, so an entry with no usable term clears the field instead.
+  const value = raw && parseTerms(raw).length ? raw : null;
+
+  const { rows } = await query(
+    'update subscribers set keyword = $2 where id = $1 returning keyword',
+    [subscriberId, value],
+  );
+  return { keyword: rows[0]?.keyword ?? null, terms: parseTerms(value ?? '') };
+}
+
 export async function unsubscribe(subscriberId) {
   await query(
     `update subscribers set unsubscribed_at = now(), session_token = null where id = $1`,
     [subscriberId],
   );
   await query('delete from watches where subscriber_id = $1', [subscriberId]);
+  await query('delete from keyword_alerts where subscriber_id = $1', [subscriberId]);
 }

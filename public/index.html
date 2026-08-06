@@ -134,6 +134,23 @@
         <p class="muted small">
           Point any reader at this URL to see only the products on your watchlist.
         </p>
+
+        <label for="keyword">Text me about anything matching</label>
+        <div class="copy-row">
+          <input
+            id="keyword"
+            type="text"
+            placeholder="one piece, pokemon"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button class="ghost" id="keyword-save-btn" type="button">Save</button>
+        </div>
+        <p class="muted small" id="keyword-hint">
+          Matching is loose: <em>one piece</em> also finds “OnePiece”, “One-Piece” and “OP”.
+          Separate several with commas. Leave empty to switch off.
+        </p>
+
         <div class="account-buttons">
           <button class="ghost" id="signout-btn" type="button">Sign out</button>
           <button class="danger" id="unsub-btn" type="button">Stop all alerts</button>

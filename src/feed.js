@@ -67,6 +67,10 @@ export function renderRss({ items, title, description, selfUrl }) {
         (item.image_url ? `<p><img src="${esc(item.image_url)}" alt="${esc(item.title)}"/></p>` : '') +
         `<p><a href="${esc(item.url)}">View on ${esc(item.site_name)}</a></p>`;
 
+      // The pw:* and media:* elements carry the same facts as the description,
+      // but as fields rather than prose. The stylesheet builds the human page
+      // from these, so it never has to pick apart the HTML blob — and a reader
+      // that understands media:thumbnail gets a real image out of it too.
       return `    <item>
       <title>${cdata(`${label}: ${item.title}`)}</title>
       <link>${esc(item.url)}</link>
@@ -74,13 +78,27 @@ export function renderRss({ items, title, description, selfUrl }) {
       <pubDate>${new Date(item.created_at).toUTCString()}</pubDate>
       <category>${esc(label)}</category>
       <source url="${esc(selfUrl)}">${esc(item.site_name)}</source>
-      <description>${cdata(body)}</description>
+      <pw:label>${esc(label)}</pw:label>
+      <pw:kind>${esc(item.type)}</pw:kind>
+      <pw:product>${esc(item.title)}</pw:product>
+      <pw:store>${esc(item.site_name)}</pw:store>
+      <pw:price>${esc(price)}</pw:price>
+${item.vendor ? `      <pw:vendor>${esc(item.vendor)}</pw:vendor>\n` : ''}${
+        item.image_url ? `      <media:thumbnail url="${esc(item.image_url)}"/>\n` : ''
+      }      <description>${cdata(body)}</description>
     </item>`;
     })
     .join('\n');
 
+  // A browser pointed at this URL applies the stylesheet and shows a readable
+  // page; feed readers ignore the instruction entirely and parse the XML below
+  // it, so the same URL serves both without content negotiation.
   return `<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+<?xml-stylesheet type="text/xsl" href="/feed.xsl"?>
+<rss version="2.0"
+     xmlns:atom="http://www.w3.org/2005/Atom"
+     xmlns:media="http://search.yahoo.com/mrss/"
+     xmlns:pw="https://github.com/SakusenCoffee/ccnotif/ns">
   <channel>
     <title>${cdata(title)}</title>
     <link>${esc(config.publicUrl)}</link>

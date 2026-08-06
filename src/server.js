@@ -17,6 +17,7 @@ import {
   clearVerificationCooldown,
   getWatchedProductIds,
   normalizePhone,
+  setKeyword,
   setWatches,
   startVerification,
   subscriberByFeedToken,
@@ -370,7 +371,13 @@ app.post(
 
       setSessionCookie(res, result.session);
       const watches = await getWatchedProductIds(result.subscriber.id);
-      res.json({ ok: true, phone, watches, feedToken: result.subscriber.feed_token });
+      res.json({
+        ok: true,
+        phone,
+        watches,
+        feedToken: result.subscriber.feed_token,
+        keyword: result.subscriber.keyword ?? '',
+      });
     } catch (err) {
       next(err);
     }
@@ -385,6 +392,7 @@ app.get('/api/me', async (req, res, next) => {
       signedIn: true,
       phone: subscriber.phone,
       feedToken: subscriber.feed_token,
+      keyword: subscriber.keyword ?? '',
       watches: await getWatchedProductIds(subscriber.id),
     });
   } catch (err) {
@@ -397,6 +405,20 @@ app.put('/api/watches', requireSubscriber, async (req, res, next) => {
     const ids = Array.isArray(req.body?.productIds) ? req.body.productIds : [];
     const saved = await setWatches(req.subscriber.id, ids);
     res.json({ ok: true, watches: saved, max: config.maxWatchesPerSubscriber });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * The standing alert: text me about anything matching this, watchlist or not.
+ * Stored as typed; `terms` comes back so the UI can show what will actually be
+ * matched on, which is not always what someone thinks they typed.
+ */
+app.put('/api/keyword', requireSubscriber, async (req, res, next) => {
+  try {
+    const saved = await setKeyword(req.subscriber.id, req.body?.keyword ?? '');
+    res.json({ ok: true, ...saved });
   } catch (err) {
     next(err);
   }
@@ -543,6 +565,13 @@ app.get('/readyz', async (_req, res) => {
   } catch (err) {
     res.status(503).json({ ok: false, error: err.message });
   }
+});
+
+// Served explicitly rather than left to the static handler's guess. A browser
+// only applies an XSLT stylesheet when it arrives with an XML content type, and
+// getting that wrong doesn't warn — the feed just renders as raw markup again.
+app.get('/feed.xsl', (_req, res) => {
+  res.type('text/xsl').sendFile(fileURLToPath(new URL('../public/feed.xsl', import.meta.url)));
 });
 
 app.use(express.static(fileURLToPath(new URL('../public', import.meta.url)), { maxAge: '5m' }));

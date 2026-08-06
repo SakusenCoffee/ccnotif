@@ -192,6 +192,7 @@ async function loadMe() {
   state.signedIn = Boolean(me.signedIn);
   state.phone = me.phone ?? null;
   state.feedToken = me.feedToken ?? null;
+  state.keyword = me.keyword ?? '';
   if (me.watches) {
     state.saved = new Set(me.watches);
     state.selected = new Set(me.watches);
@@ -233,6 +234,7 @@ function openDialog(pane) {
   if (pane === 'account') {
     $('#account-phone').textContent = state.phone ?? '';
     $('#feed-url').value = `${location.origin}/feed/${state.feedToken}.xml`;
+    $('#keyword').value = state.keyword ?? '';
   }
   $('#phone-error').hidden = true;
   $('#code-error').hidden = true;
@@ -296,6 +298,7 @@ $('#check-code-btn').addEventListener('click', async () => {
     });
     state.signedIn = true;
     state.feedToken = data.feedToken;
+    state.keyword = data.keyword ?? '';
     // Keep whatever the visitor ticked before signing in, plus anything already
     // on the server-side watchlist.
     const before = state.selected.size;
@@ -330,6 +333,7 @@ function resetToSignedOut() {
   state.signedIn = false;
   state.phone = null;
   state.feedToken = null;
+  state.keyword = '';
   state.saved = new Set();
   state.selected = new Set();
   renderAccount();
@@ -337,6 +341,38 @@ function resetToSignedOut() {
   renderTray();
   dialog.close();
 }
+
+// The standing alert. Saving reports back which terms will actually be matched
+// on, because "one piece" quietly becoming an "OP" match too is worth seeing.
+$('#keyword-save-btn').addEventListener('click', async () => {
+  const button = $('#keyword-save-btn');
+  const hint = $('#keyword-hint');
+  button.disabled = true;
+  button.textContent = 'Saving';
+  try {
+    const data = await api('/api/keyword', {
+      method: 'PUT',
+      body: { keyword: $('#keyword').value },
+    });
+    state.keyword = data.keyword ?? '';
+    $('#keyword').value = state.keyword;
+    hint.textContent = data.terms?.length
+      ? `Alerting on: ${data.terms.join(', ')} — plus close spellings and initials.`
+      : 'Keyword alerts are off. Type something to switch them back on.';
+  } catch (err) {
+    hint.textContent = err.data?.message ?? err.message;
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Save';
+  }
+});
+
+$('#keyword').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    $('#keyword-save-btn').click();
+  }
+});
 
 $('#signout-btn').addEventListener('click', async () => {
   await api('/api/signout', { method: 'POST' });

@@ -93,6 +93,11 @@ create table if not exists subscribers (
   created_at      timestamptz not null default now()
 );
 
+-- A standing alert: text me about anything whose title matches this, without my
+-- having to have found the product and ticked it first. Free text, matched
+-- fuzzily (see src/match.js).
+alter table subscribers add column if not exists keyword text;
+
 -- The watchlist: which subscriber wants a text about which product.
 create table if not exists watches (
   subscriber_id    bigint      not null references subscribers (id) on delete cascade,
@@ -103,6 +108,18 @@ create table if not exists watches (
 );
 
 create index if not exists watches_product_idx on watches (product_id);
+
+-- When a keyword alert last texted someone about a given product. Separate from
+-- `watches` because these products were never chosen — the alert found them —
+-- but the cooldown reasoning is identical: a product whose availability flaps
+-- must not become a stream of texts.
+create table if not exists keyword_alerts (
+  subscriber_id    bigint      not null references subscribers (id) on delete cascade,
+  product_id       bigint      not null references products (id) on delete cascade,
+  term             text,
+  last_notified_at timestamptz not null default now(),
+  primary key (subscriber_id, product_id)
+);
 
 -- Append-only log of interesting things, which is what the RSS feed renders.
 create table if not exists events (
