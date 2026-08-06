@@ -369,3 +369,14 @@ dialog input { width: 100%; }
 }
 .notify-toggle.on { color: var(--pw-good); border-color: var(--pw-good); }
 .notify-toggle:disabled { opacity: .5; }
+
+/* Push notification setup, in the account pane. */
+.push-block {
+  margin-top: 22px; padding: 14px;
+  border: 1px solid var(--pw-line); border-radius: 10px;
+}
+.push-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.push-head strong { font-size: 13.5px; }
+.push-head p { margin-top: 2px; }
+.push-block .copy-row { margin-top: 8px; }
+#push-toggle.on { color: var(--pw-good); border-color: var(--pw-good); }

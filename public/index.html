@@ -195,6 +195,31 @@
           <strong>RSS</strong>, at the top of the page.
         </p>
 
+        <div class="push-block">
+          <div class="push-head">
+            <div>
+              <strong>Push notifications</strong>
+              <p class="muted small" id="push-state">Free, and no phone number needed.</p>
+            </div>
+            <button class="ghost" id="push-toggle" type="button">Turn on</button>
+          </div>
+          <div id="push-setup" hidden>
+            <p class="muted small">
+              Install <strong>ntfy</strong> (App Store, Google Play or F-Droid), then subscribe
+              to this topic. Anyone who knows it can read your alerts, so keep it to yourself.
+            </p>
+            <div class="copy-row">
+              <input id="push-topic" type="text" readonly />
+              <button class="ghost" id="push-copy" type="button">Copy</button>
+            </div>
+            <p class="muted small">
+              <a id="push-link" href="#" target="_blank" rel="noopener">Open in a browser</a>
+              to check it works · <button class="linkish inline" id="push-rotate" type="button">new topic</button>
+            </p>
+          </div>
+          <p class="error" id="push-error" hidden></p>
+        </div>
+
         <div class="account-buttons">
           <button class="ghost" id="change-pass-btn" type="button">Change password</button>
           <button class="ghost" id="signout-btn" type="button">Sign out</button>

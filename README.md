@@ -16,10 +16,36 @@ npm start
 
 `npm run poll` does a single polling pass and exits.
 
+## Accounts
+
+The site requires a login and has no sign-up page. Create accounts from the
+command line:
+
+```bash
+npm run useradd <username> [password]     # password is generated if omitted
+npm run useradd -- --list
+npm run useradd -- --passwd <username>    # reset
+npm run useradd -- --delete <username>
+```
+
+On a fresh deploy there is no account yet and therefore no way in. Set
+`ADMIN_USERNAME` and `ADMIN_PASSWORD`, start the app, sign in, then clear them.
+
+## Notifications
+
+Two channels, either or both:
+
+- **Push (free)** — through [ntfy](https://ntfy.sh). No account, no per-message
+  cost, no phone number. Turn it on under Account and subscribe to the topic
+  shown in the ntfy app. Topics are generated rather than chosen, because on a
+  public server anyone who knows a topic name can read it.
+- **SMS** — needs Twilio credentials and costs per message.
+
+With neither configured, messages are written to the log instead of sent.
+
 ## Configuration
 
-See `.env.example`. Texting is optional — with no SMS credentials set, messages
-are written to the log instead of sent.
+See `.env.example`.
 
 ## Notes
 

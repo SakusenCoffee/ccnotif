@@ -4,6 +4,8 @@ import { fetchSiteProducts } from './discover.js';
 import { enabledSites, getSite } from './sites.js';
 import { compileAlert } from './match.js';
 import { keywordMessage, restockMessage, sendSms } from './notify.js';
+import { formatPrice } from './money.js';
+import { restockPush, sendPush } from './push.js';
 
 let running = false;
 let timer = null;
@@ -213,37 +215,63 @@ async function notifyRestocks(restockEvents) {
 
   for (const event of restockEvents) {
     const { rows: watchers } = await query(
-      `select s.id, s.phone, s.feed_token, si.currency
+      `select s.id, s.phone, s.verified, s.feed_token, s.ntfy_topic, s.ntfy_enabled,
+              si.currency
          from watches w
          join subscribers s on s.id = w.subscriber_id
          join products p on p.id = w.product_id
          join sites si on si.id = p.site_id
         where w.product_id = $1
-          -- Watching is open to anyone; being texted is not. A watch only
-          -- reaches a phone if it was switched on for this product *and* there
-          -- is a verified number to send it to.
+          -- Watching is open to anyone; being notified is not. A watch only
+          -- reaches someone if it was switched on for this product *and* there
+          -- is somewhere to send it — a verified number, a push topic, or both.
           and w.notify
-          and s.verified
-          and s.phone is not null
           and s.unsubscribed_at is null
+          and ((s.verified and s.phone is not null)
+               or (s.ntfy_enabled and s.ntfy_topic is not null))
           and (w.last_notified_at is null
                or w.last_notified_at < now() - ($2 || ' hours')::interval)`,
       [event.product_id, String(config.poll.cooldownHours)],
     );
 
     for (const watcher of watchers) {
-      const result = await sendSms(
-        watcher.phone,
-        restockMessage(event, watcher.feed_token, watcher.currency),
-      );
+      // Every channel this person has, because someone who set up both wants
+      // whichever arrives first, not an arbitrary one of the two.
+      const results = [];
 
-      await query(
-        `insert into deliveries (subscriber_id, event_id, status, provider_sid, error)
-           values ($1,$2,$3,$4,$5)`,
-        [watcher.id, event.id, result.ok ? 'sent' : 'failed', result.sid, result.error ?? null],
-      );
+      if (watcher.ntfy_enabled && watcher.ntfy_topic) {
+        const push = await sendPush(
+          watcher.ntfy_topic,
+          restockPush(event, watcher.currency, formatPrice),
+        );
+        results.push({ channel: 'push', ...push });
+      }
 
-      if (result.ok) {
+      if (watcher.verified && watcher.phone) {
+        const sms = await sendSms(
+          watcher.phone,
+          restockMessage(event, watcher.feed_token, watcher.currency),
+        );
+        results.push({ channel: 'sms', ...sms });
+      }
+
+      for (const result of results) {
+        await query(
+          `insert into deliveries (subscriber_id, event_id, status, provider_sid, error)
+             values ($1,$2,$3,$4,$5)`,
+          [
+            watcher.id,
+            event.id,
+            result.ok ? 'sent' : 'failed',
+            result.sid ?? null,
+            result.error ?? null,
+          ],
+        );
+      }
+
+      // One channel landing is enough to count as told, and to start the
+      // cooldown — otherwise a broken second channel would re-alert forever.
+      if (results.some((r) => r.ok)) {
         sent += 1;
         await query(
           'update watches set last_notified_at = now() where subscriber_id = $1 and product_id = $2',
@@ -268,13 +296,13 @@ async function notifyKeywordMatches(events) {
   if (!events.length) return 0;
 
   const { rows: subscribers } = await query(
-    `select id, phone, feed_token, keyword
+    `select id, phone, verified, feed_token, keyword, ntfy_topic, ntfy_enabled
        from subscribers
-      where verified
-        and phone is not null
-        and unsubscribed_at is null
+      where unsubscribed_at is null
         and keyword is not null
-        and keyword <> ''`,
+        and keyword <> ''
+        and ((verified and phone is not null)
+             or (ntfy_enabled and ntfy_topic is not null))`,
   );
   if (!subscribers.length) return 0;
 
@@ -311,18 +339,40 @@ async function notifyKeywordMatches(events) {
         [event.product_id],
       );
       const term = alert.match(event.title);
-      const result = await sendSms(
-        subscriber.phone,
-        keywordMessage(event, subscriber.feed_token, site[0]?.currency ?? 'USD', term),
-      );
+      const currency = site[0]?.currency ?? 'USD';
+      const results = [];
 
-      await query(
-        `insert into deliveries (subscriber_id, event_id, status, provider_sid, error)
-           values ($1,$2,$3,$4,$5)`,
-        [subscriber.id, event.id, result.ok ? 'sent' : 'failed', result.sid, result.error ?? null],
-      );
+      if (subscriber.ntfy_enabled && subscriber.ntfy_topic) {
+        const push = await sendPush(subscriber.ntfy_topic, {
+          ...restockPush(event, currency, formatPrice),
+          title: term ? `Matched "${term}"` : 'Matched your alert',
+        });
+        results.push({ channel: 'push', ...push });
+      }
 
-      if (result.ok) {
+      if (subscriber.verified && subscriber.phone) {
+        const sms = await sendSms(
+          subscriber.phone,
+          keywordMessage(event, subscriber.feed_token, currency, term),
+        );
+        results.push({ channel: 'sms', ...sms });
+      }
+
+      for (const result of results) {
+        await query(
+          `insert into deliveries (subscriber_id, event_id, status, provider_sid, error)
+             values ($1,$2,$3,$4,$5)`,
+          [
+            subscriber.id,
+            event.id,
+            result.ok ? 'sent' : 'failed',
+            result.sid ?? null,
+            result.error ?? null,
+          ],
+        );
+      }
+
+      if (results.some((r) => r.ok)) {
         sent += 1;
         await query(
           `insert into keyword_alerts (subscriber_id, product_id, term)

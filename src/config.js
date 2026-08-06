@@ -107,6 +107,35 @@ export const config = {
     resendCooldownSeconds: int(process.env.CODE_RESEND_COOLDOWN_SECONDS, 0),
   },
 
+  // A first account, created or updated at boot from the environment.
+  //
+  // There is no sign-up page and accounts are normally made with
+  // `npm run useradd`, which needs a shell on the running service. That is a
+  // bad thing to require of someone who has just deployed and is now locked
+  // out of their own site by the very gate they asked for. Setting these two
+  // variables is something every platform can do from its dashboard.
+  //
+  // Leave them set and the password is re-applied on every boot; clear them
+  // once you are in and the account stays exactly as it is.
+  bootstrap: {
+    username: str('ADMIN_USERNAME'),
+    password: str('ADMIN_PASSWORD'),
+    get enabled() {
+      return Boolean(this.username && this.password);
+    },
+  },
+
+  // Push notifications through ntfy — free, no account, and no per-message
+  // cost. The default server is the public one; point this at your own if you
+  // would rather not trust it with your topics.
+  ntfy: {
+    server: (str('NTFY_SERVER') || 'https://ntfy.sh').replace(/\/+$/, ''),
+    // Only needed for a server with access control, which the public one has
+    // not; a topic there is readable by anyone who guesses its name, which is
+    // why the ones here are generated rather than chosen.
+    token: str('NTFY_TOKEN'),
+  },
+
   // When set, adding/editing/removing stores requires this token. Leave unset
   // while the app is private; set it before sharing the URL.
   adminToken: str('ADMIN_TOKEN') ?? null,

@@ -14,6 +14,7 @@ export const state = {
   notify: {},
   username: null,
   hasAccount: false,
+  push: { enabled: false, topic: null, url: null },
   status: 'all',
   sort: 'title',
   siteId: '',

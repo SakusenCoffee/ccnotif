@@ -111,6 +111,12 @@ alter table subscribers add column if not exists password_hash text;
 create unique index if not exists subscribers_username_idx
   on subscribers (lower(username));
 
+-- Push notifications as an alternative to texting. The topic is generated, not
+-- chosen: on a public ntfy server anyone who knows a topic name can read it, so
+-- a guessable one would leak what you watch.
+alter table subscribers add column if not exists ntfy_topic text;
+alter table subscribers add column if not exists ntfy_enabled boolean not null default false;
+
 -- Watching no longer requires a phone number. A visitor who ticks something
 -- gets a row here with no phone at all, identified only by their session, and
 -- attaches a number later if and when they want texts. The unique index still

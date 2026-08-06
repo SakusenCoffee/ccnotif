@@ -3,7 +3,7 @@ import { parsePhoneNumberFromString } from 'libphonenumber-js';
 import { config } from './config.js';
 import { query } from './db.js';
 import { parseTerms } from './match.js';
-import { hashPassword, normalizeUsername, verifyPassword } from './auth.js';
+import { hashPassword, normalizeUsername, passwordProblem, verifyPassword } from './auth.js';
 
 export function normalizePhone(raw) {
   if (!raw) return null;
@@ -291,6 +291,75 @@ export async function changePassword(subscriber, currentPassword, newPassword) {
     session,
   ]);
   return { session };
+}
+
+/**
+ * Switch push notifications on, minting a topic the first time. The topic is
+ * kept once created so an app that is already subscribed does not silently stop
+ * receiving anything when it is switched off and on again.
+ */
+export async function setPushEnabled(subscriberId, enabled) {
+  const { rows } = await query(
+    `update subscribers
+        set ntfy_enabled = $2,
+            ntfy_topic = case
+              when $2 and ntfy_topic is null then $3
+              else ntfy_topic
+            end
+      where id = $1
+      returning ntfy_topic, ntfy_enabled`,
+    [subscriberId, Boolean(enabled), `pw-${token(18)}`],
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Issue a fresh topic, abandoning the old one. For when a topic has been shared
+ * or is suspected known — on a public ntfy server that is the only remedy,
+ * since anyone who knows a topic name can read it.
+ */
+export async function rotatePushTopic(subscriberId) {
+  const { rows } = await query(
+    `update subscribers set ntfy_topic = $2 where id = $1 returning ntfy_topic, ntfy_enabled`,
+    [subscriberId, `pw-${token(18)}`],
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Create or update the account named in the environment.
+ *
+ * Runs at boot. Its whole purpose is that someone who has just put a login in
+ * front of their own site, and has no account yet, is not locked out of it —
+ * so it deliberately re-applies the password every time rather than only
+ * creating what is missing. A forgotten password is fixed by setting the
+ * variable and restarting.
+ */
+export async function ensureBootstrapAccount({ username, password }) {
+  const name = normalizeUsername(username);
+  if (!name) return { error: 'bad_username' };
+  if (passwordProblem(password)) return { error: 'bad_password' };
+
+  const hash = await hashPassword(password);
+  const { rows: existing } = await query(
+    'select id from subscribers where lower(username) = $1',
+    [name],
+  );
+
+  if (existing.length) {
+    await query('update subscribers set password_hash = $2 where id = $1', [
+      existing[0].id,
+      hash,
+    ]);
+    return { username: name, created: false };
+  }
+
+  await query(
+    `insert into subscribers (username, password_hash, feed_token, phone)
+       values ($1, $2, $3, null)`,
+    [name, hash, token()],
+  );
+  return { username: name, created: true };
 }
 
 export async function unsubscribe(subscriberId) {

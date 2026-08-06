@@ -252,6 +252,7 @@ async function loadMe() {
   state.notify = me.notify ?? {};
   state.username = me.username ?? null;
   state.hasAccount = Boolean(me.hasAccount);
+  state.push = me.push ?? { enabled: false, topic: null, url: null };
   if (me.watches) {
     state.saved = new Set(me.watches);
     state.selected = new Set(me.watches);
@@ -291,6 +292,7 @@ function openDialog(pane) {
     $(`#pane-${id}`).hidden = id !== pane;
   }
   if (pane === 'account') {
+    renderPush();
     const bits = [];
     if (state.username) bits.push(`Signed in as ${state.username}`);
     if (state.phone) bits.push(`alerts go to ${state.phone}`);
@@ -618,6 +620,60 @@ function adoptSession(data) {
 $('#to-phone-btn').addEventListener('click', () => openDialog('phone'));
 $('#pass-back-btn').addEventListener('click', () => openDialog('account'));
 $('#change-pass-btn').addEventListener('click', () => openDialog('password'));
+
+/** Reflect the current push state into the account pane. */
+function renderPush() {
+  const { enabled, topic, url } = state.push ?? {};
+  $('#push-state').textContent = enabled
+    ? 'On. Alerts arrive in the ntfy app.'
+    : 'Free, and no phone number needed.';
+  $('#push-toggle').textContent = enabled ? 'Turn off' : 'Turn on';
+  $('#push-toggle').classList.toggle('on', Boolean(enabled));
+  $('#push-setup').hidden = !enabled || !topic;
+  if (topic) {
+    $('#push-topic').value = topic;
+    $('#push-link').href = url ?? '#';
+  }
+}
+
+$('#push-toggle').addEventListener('click', async () => {
+  const button = $('#push-toggle');
+  const next = !state.push?.enabled;
+  button.disabled = true;
+  $('#push-error').hidden = true;
+  try {
+    const data = await api('/api/push', { method: 'PUT', body: { enabled: next } });
+    state.push = { enabled: data.enabled, topic: data.topic, url: data.url };
+    renderPush();
+  } catch (err) {
+    // A failure here usually means the topic was never subscribed to, so say
+    // what to do rather than only what broke.
+    showError('#push-error', err.data?.message ?? err.message);
+    if (err.data?.topic) {
+      state.push = { enabled: false, topic: err.data.topic, url: err.data.url };
+      renderPush();
+    }
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$('#push-copy').addEventListener('click', async () => {
+  await navigator.clipboard.writeText($('#push-topic').value).catch(() => {});
+  $('#push-copy').textContent = 'Copied';
+  setTimeout(() => ($('#push-copy').textContent = 'Copy'), 1500);
+});
+
+$('#push-rotate').addEventListener('click', async () => {
+  if (!confirm('Issue a new topic? The old one stops working and you must resubscribe.')) return;
+  try {
+    const data = await api('/api/push/rotate', { method: 'POST' });
+    state.push = { enabled: data.enabled, topic: data.topic, url: data.url };
+    renderPush();
+  } catch (err) {
+    showError('#push-error', err.data?.message ?? err.message);
+  }
+});
 
 $('#login-btn').addEventListener('click', async () => {
   try {

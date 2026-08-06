@@ -9,6 +9,7 @@ import { getFeedItems, parseTypes, renderRss } from './feed.js';
 import { getRates, ratesFor, startFx } from './fx.js';
 import { describeSmsFailure, sendSms, verificationMessage } from './notify.js';
 import { passwordProblem } from './auth.js';
+import { sendPush, testPush, topicUrl } from './push.js';
 import { diagnoseTwilio } from './twilio-diagnose.js';
 import { adapterFor } from './platforms/index.js';
 import { pollerState, pollSite, runPoll, startPoller } from './poller.js';
@@ -19,11 +20,14 @@ import {
   changePassword,
   checkVerification,
   clearVerificationCooldown,
+  ensureBootstrapAccount,
   createAnonymousSubscriber,
   getWatchNotifyMap,
   getWatchedProductIds,
   normalizePhone,
+  rotatePushTopic,
   setKeyword,
+  setPushEnabled,
   setWatchNotify,
   setWatches,
   startVerification,
@@ -538,6 +542,12 @@ app.get('/api/me', async (req, res, next) => {
       phone: subscriber.phone,
       username: subscriber.username ?? null,
       hasAccount: Boolean(subscriber.password_hash),
+      push: {
+        enabled: Boolean(subscriber.ntfy_enabled && subscriber.ntfy_topic),
+        topic: subscriber.ntfy_topic ?? null,
+        url: subscriber.ntfy_topic ? topicUrl(subscriber.ntfy_topic) : null,
+        server: config.ntfy.server,
+      },
       feedToken: subscriber.feed_token,
       keyword: subscriber.keyword ?? '',
       watches: await getWatchedProductIds(subscriber.id),
@@ -641,6 +651,74 @@ app.put(
   },
 );
 
+// --- push notifications -----------------------------------------------------
+//
+// The free alternative to texting: no per-message cost, no carrier deciding
+// whether an alert looks like spam, and no phone number handed over. It sits
+// beside SMS rather than replacing it — a text needs nothing installed and
+// arrives on any phone with signal, so both are worth having.
+
+app.get('/api/push', requireSubscriber, (req, res) => {
+  const topic = req.subscriber.ntfy_topic;
+  res.json({
+    enabled: Boolean(req.subscriber.ntfy_enabled && topic),
+    topic: topic ?? null,
+    // What to paste into the app, and what to open to check it works.
+    url: topic ? topicUrl(topic) : null,
+    server: config.ntfy.server,
+  });
+});
+
+app.put('/api/push', requireSubscriber, async (req, res, next) => {
+  try {
+    const state = await setPushEnabled(req.subscriber.id, req.body?.enabled);
+    if (!state) return res.status(404).json({ error: 'not_found' });
+
+    // Prove it end to end on the way in. Being told "push is on" and then
+    // hearing nothing for a week is the failure mode worth designing out.
+    let delivered = null;
+    if (state.ntfy_enabled && state.ntfy_topic) {
+      const result = await sendPush(state.ntfy_topic, testPush());
+      delivered = result.ok;
+      if (!result.ok) {
+        return res.status(502).json({
+          error: 'push_failed',
+          message: result.error,
+          topic: state.ntfy_topic,
+          url: topicUrl(state.ntfy_topic),
+        });
+      }
+    }
+
+    res.json({
+      ok: true,
+      enabled: state.ntfy_enabled,
+      topic: state.ntfy_topic,
+      url: state.ntfy_topic ? topicUrl(state.ntfy_topic) : null,
+      server: config.ntfy.server,
+      delivered,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/push/rotate', requireSubscriber, async (req, res, next) => {
+  try {
+    const state = await rotatePushTopic(req.subscriber.id);
+    if (!state) return res.status(404).json({ error: 'not_found' });
+    res.json({
+      ok: true,
+      enabled: state.ntfy_enabled,
+      topic: state.ntfy_topic,
+      url: topicUrl(state.ntfy_topic),
+      server: config.ntfy.server,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 /**
  * The standing alert: text me about anything matching this, watchlist or not.
  * Stored as typed; `terms` comes back so the UI can show what will actually be
@@ -665,10 +743,12 @@ app.put('/api/watches/:productId/notify', withSubscriber, async (req, res, next)
     const productId = Number(req.params.productId);
     if (!Number.isFinite(productId)) return res.status(400).json({ error: 'bad_product' });
 
-    if (notify && !(req.subscriber.verified && req.subscriber.phone)) {
+    const canText = req.subscriber.verified && req.subscriber.phone;
+    const canPush = req.subscriber.ntfy_enabled && req.subscriber.ntfy_topic;
+    if (notify && !canText && !canPush) {
       return res.status(403).json({
         error: 'verification_required',
-        message: 'Add a phone number to be texted about this.',
+        message: 'Turn on push notifications or add a phone number first.',
       });
     }
 
@@ -846,6 +926,45 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: 'internal_error' });
 });
 
+/**
+ * Create or refresh the account named by ADMIN_USERNAME / ADMIN_PASSWORD.
+ *
+ * Without this, deploying the login gate with no account in the database locks
+ * the operator out of their own site, and the only way back in is a shell on
+ * the running service. Setting two variables is something every platform can
+ * do from its dashboard.
+ */
+async function createBootstrapAccount() {
+  if (!config.bootstrap.enabled) {
+    const { rows } = await query(
+      'select count(*)::int as n from subscribers where username is not null',
+    ).catch(() => ({ rows: [{ n: 1 }] }));
+    if (!rows[0].n) {
+      console.warn(
+        '[boot] There are no accounts and the site requires a login. Create one with ' +
+          '`npm run useradd <username>`, or set ADMIN_USERNAME and ADMIN_PASSWORD and restart.',
+      );
+    }
+    return;
+  }
+
+  try {
+    const result = await ensureBootstrapAccount(config.bootstrap);
+    if (result.error === 'bad_username') {
+      console.error('[boot] ADMIN_USERNAME is not a valid username; no account was created.');
+    } else if (result.error === 'bad_password') {
+      console.error('[boot] ADMIN_PASSWORD is too short (8 characters minimum).');
+    } else {
+      console.log(
+        `[boot] ${result.created ? 'created' : 'updated'} account "${result.username}" ` +
+          'from ADMIN_USERNAME/ADMIN_PASSWORD. Clear those variables once you can sign in.',
+      );
+    }
+  } catch (err) {
+    console.error(`[boot] could not apply ADMIN_USERNAME/ADMIN_PASSWORD: ${err.message}`);
+  }
+}
+
 /** Optionally create a store on first boot so a fresh deploy isn't empty. */
 async function seedFirstSite() {
   if (!config.seedSite) return;
@@ -871,6 +990,7 @@ const server = app.listen(config.port, () => {
   // Keep retrying in the background; the poller starts once the schema is in.
   initDb({
     onReady: async () => {
+      await createBootstrapAccount();
       await seedFirstSite();
       startPoller();
     },
