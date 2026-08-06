@@ -1,4 +1,4 @@
-import { $, api, convertedMoney, money, state } from './core.js';
+import { $, $$, api, convertedMoney, money, state } from './core.js';
 
 // Which of the two views the page is showing: the pre-order grid, or Updates.
 let showingFeed = false;
@@ -530,6 +530,48 @@ function renderFeedItems(events) {
       `${price} · ${event.site_name} · ${new Date(event.created_at).toLocaleString()}`;
 
     body.append(badge, title, meta);
+
+    // Acting on an update without hunting for the product in the grid first.
+    // An update is the moment you decide you care about something, so the
+    // decision belongs here rather than a view away.
+    if (event.product_id) {
+      const watching = state.saved.has(event.product_id);
+      const watch = document.createElement('button');
+      watch.type = 'button';
+      watch.className = `feed-watch${watching ? ' on' : ''}`;
+      watch.textContent = watching ? 'Watching' : 'Watch';
+      watch.title = watching ? 'Stop watching this product' : 'Watch this product';
+
+      watch.addEventListener('click', async () => {
+        watch.disabled = true;
+        const next = watching
+          ? [...state.saved].filter((id) => id !== event.product_id)
+          : [...state.saved, event.product_id];
+        try {
+          const data = await api('/api/watches', { method: 'PUT', body: { productIds: next } });
+          state.saved = new Set(data.watches);
+          state.selected = new Set(data.watches);
+          if (!watching) {
+            // A newly watched product has no settings row yet in the client's
+            // copy; without this the watched list would show both switches off
+            // until the next full load, which is true but only by accident.
+            state.notify[event.product_id] = { notify: false, autobuy: false };
+          } else {
+            delete state.notify[event.product_id];
+          }
+          adoptMatch(data);
+          renderFeedItems(state.feedEvents ?? []);
+          renderWatchedDrop();
+          renderTray();
+        } catch (err) {
+          showError('#alert-error', err.data?.message ?? err.message);
+          watch.disabled = false;
+        }
+      });
+
+      body.append(watch);
+    }
+
     li.append(body);
     list.append(li);
   }
@@ -575,6 +617,7 @@ async function loadFeed() {
   try {
     const data = await api('/api/events?type=all');
     const events = data.events ?? [];
+    state.feedEvents = events;
     $('#feed-status').textContent = events.length
       ? `${events.length} update${events.length === 1 ? '' : 's'}`
       : '';
@@ -623,10 +666,16 @@ $('#feed-back-btn').addEventListener('click', () => showFeed(false));
 
 function renderMatch() {
   const value = state.match ?? '';
-  $('#match-text').value = value;
-  $('#match-note').textContent = value
-    ? `${value.split(',').length} armed for buying. Paste this as the MATCH value.`
-    : 'Nothing is armed for buying yet. Turn on Auto-buy for an alert or a watched product.';
+  const count = value ? value.split(',').length : 0;
+  const note = count
+    ? `${count} term${count === 1 ? '' : 's'} — every alert you have saved, plus watched ` +
+      'products with Auto-buy on. Paste this as the MATCH value.'
+    : 'Nothing to match yet. Save an alert below, or turn on Auto-buy for a watched product.';
+
+  // The bar appears in more than one place — in the footer, so it is on screen
+  // whatever view you are in, and beside the alerts that feed it.
+  for (const input of $$('.match-text')) input.value = value;
+  for (const el of $$('.match-note')) el.textContent = note;
 }
 
 /** Adopt a MATCH value returned alongside some other change. */
@@ -637,11 +686,13 @@ function adoptMatch(data) {
   }
 }
 
-$('#match-copy').addEventListener('click', async () => {
-  await navigator.clipboard.writeText($('#match-text').value).catch(() => {});
-  $('#match-copy').textContent = 'Copied';
-  setTimeout(() => ($('#match-copy').textContent = 'Copy'), 1500);
-});
+for (const button of $$('.match-copy')) {
+  button.addEventListener('click', async () => {
+    await navigator.clipboard.writeText(state.match ?? '').catch(() => {});
+    button.textContent = 'Copied';
+    setTimeout(() => (button.textContent = 'Copy'), 1500);
+  });
+}
 
 // --- standing alerts --------------------------------------------------------
 //

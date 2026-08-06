@@ -63,7 +63,10 @@ export const dbState = {
 export const pool = config.databaseUrl
   ? new pg.Pool({
       connectionString: config.databaseUrl,
-      max: 8,
+      // Tunable because not every Postgres is a real one: an embedded or
+      // single-connection database needs this at 1, and a managed instance with
+      // a low connection cap needs it below whatever that cap is.
+      max: Math.max(1, Number.parseInt(process.env.DATABASE_POOL_MAX ?? '', 10) || 8),
       connectionTimeoutMillis: 10_000,
       ssl: sslConfigFor(config.databaseUrl),
     })

@@ -456,3 +456,16 @@ dialog input { width: 100%; }
 .watched-row .badge { align-self: center; }
 
 .notify-toggle.buy.on { color: var(--pw-accent); border-color: var(--pw-accent); }
+
+/* Watch, straight from an update in the RSS view. */
+.feed-watch {
+  align-self: flex-start;
+  margin-top: 6px;
+  padding: 3px 10px;
+  font-size: 11.5px; font-weight: 600;
+  border-radius: 20px;
+  border: 1px solid var(--pw-line);
+  background: transparent; color: var(--pw-muted);
+}
+.feed-watch.on { color: var(--pw-good); border-color: var(--pw-good); }
+.feed-watch:disabled { opacity: .5; }

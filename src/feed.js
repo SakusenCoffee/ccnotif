@@ -29,6 +29,9 @@ export async function getFeedItems({ types, feedToken, siteId, sinceId, limit = 
   const params = [types, limit];
   let sql = `
     select e.id, e.type, e.title, e.url, e.image_url, e.price, e.created_at,
+           -- The product itself, so an update can be acted on rather than only
+           -- read: the RSS view offers a Watch button per row.
+           p.id as product_id,
            p.vendor, p.handle, s.name as site_name, s.currency
       from events e
       join products p on p.id = e.product_id

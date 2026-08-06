@@ -68,9 +68,10 @@ without setting up a term for it.
 
 ## The buyer's MATCH line
 
-The footer shows a generated, copyable line built from everything currently
-armed for buying — alert terms and watched products with Auto-buy on. Paste it
-as the `MATCH` value in the userscript.
+A generated, copyable line built from every alert term you have saved plus the
+watched products with Auto-buy on. Paste it as the `MATCH` value in the
+userscript. It appears twice — beside the alerts that feed it, and in the footer
+so it is on screen whatever view you are in.
 
 The script gets its actual work from the server (`/api/dispatch`), so this only
 covers the one case the server cannot: a product page you open yourself, where

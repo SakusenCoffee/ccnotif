@@ -81,6 +81,15 @@
           <p class="muted small" id="feed-url-note"></p>
         </details>
 
+        <div class="match-bar">
+          <label>Paste into the Tampermonkey script — <code>MATCH:</code></label>
+          <div class="copy-row">
+            <input class="match-text" type="text" readonly aria-label="MATCH value" />
+            <button class="ghost match-copy" type="button">Copy</button>
+          </div>
+          <p class="muted small match-note"></p>
+        </div>
+
         <details class="watched-drop" id="watched-drop">
           <summary>Products you watch <span id="watched-count"></span></summary>
           <ul class="watched-list" id="watched-list"></ul>
@@ -287,15 +296,13 @@
     </dialog>
 
     <footer class="wrap foot">
-      <div class="match-bar" id="match-bar">
-        <label for="match-text">
-          Paste into the Tampermonkey script — <code>MATCH:</code>
-        </label>
+      <div class="match-bar">
+        <label>Paste into the Tampermonkey script — <code>MATCH:</code></label>
         <div class="copy-row">
-          <input id="match-text" type="text" readonly />
-          <button class="ghost" id="match-copy" type="button">Copy</button>
+          <input class="match-text" type="text" readonly aria-label="MATCH value" />
+          <button class="ghost match-copy" type="button">Copy</button>
         </div>
-        <p class="muted small" id="match-note"></p>
+        <p class="muted small match-note"></p>
       </div>
       <p>
         Not affiliated with the store. Data comes from its public product feed.

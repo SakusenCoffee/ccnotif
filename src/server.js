@@ -158,8 +158,13 @@ const SESSION_CACHE_MS = 5_000;
 const sessionCache = new Map(); // token -> { at, account }
 
 function forgetSession(token) {
-  if (token) sessionCache.delete(token);
-  else sessionCache.clear();
+  if (token) {
+    sessionCache.delete(token);
+    sessionInflight.delete(token);
+  } else {
+    sessionCache.clear();
+    sessionInflight.clear();
+  }
 }
 
 setInterval(() => {
@@ -169,6 +174,15 @@ setInterval(() => {
   }
 }, 30_000).unref();
 
+// Lookups already in flight, so a burst of requests arriving on a cold cache
+// asks the database once rather than once each. A page load fires the document,
+// the stylesheet, three scripts and several API calls more or less together;
+// without this they all miss the cache simultaneously and issue the same query
+// in parallel, which is both wasteful and the moment a database under strain is
+// most likely to drop one — taking a script with it and leaving the page
+// half-loaded with nothing useful on screen.
+const sessionInflight = new Map(); // token -> Promise<account|null>
+
 /** A session belonging to a real account — not merely a session. */
 async function accountFromRequest(req) {
   const token = req.cookies?.[config.sessionCookie];
@@ -177,12 +191,20 @@ async function accountFromRequest(req) {
   const cached = sessionCache.get(token);
   if (cached && Date.now() - cached.at < SESSION_CACHE_MS) return cached.account;
 
-  const subscriber = await subscriberBySession(token);
-  const account = subscriber?.password_hash ? subscriber : null;
-  // Negative results are cached too: an expired cookie on a page that keeps
-  // retrying should not become a query per retry.
-  sessionCache.set(token, { at: Date.now(), account });
-  return account;
+  const pending = sessionInflight.get(token);
+  if (pending) return pending;
+
+  const lookup = (async () => {
+    const subscriber = await subscriberBySession(token);
+    const account = subscriber?.password_hash ? subscriber : null;
+    // Negative results are cached too: an expired cookie on a page that keeps
+    // retrying should not become a query per retry.
+    sessionCache.set(token, { at: Date.now(), account });
+    return account;
+  })().finally(() => sessionInflight.delete(token));
+
+  sessionInflight.set(token, lookup);
+  return lookup;
 }
 
 app.use(async (req, res, next) => {

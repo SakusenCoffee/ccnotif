@@ -1,4 +1,5 @@
 export const $ = (sel) => document.querySelector(sel);
+export const $$ = (sel) => [...document.querySelectorAll(sel)];
 
 export const state = {
   products: [],
@@ -11,6 +12,7 @@ export const state = {
   feedToken: null,
   alerts: [],
   match: '',
+  feedEvents: [],
   watchedOnly: false,
   notify: {},
   username: null,

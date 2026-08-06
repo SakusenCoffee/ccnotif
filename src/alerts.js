@@ -141,8 +141,8 @@ export function matchingAlerts(alerts, title) {
  * The script needs its own copy of what to act on for one case the server
  * cannot cover: a product page you open yourself, where nothing has been
  * dispatched and the script has to decide locally whether this is something you
- * wanted. So it is built from exactly the things armed for buying — alert terms
- * and watched products with Auto-buy on — and nothing else.
+ * wanted. So it carries every alert term you have saved, plus the watched
+ * products armed for buying.
  *
  * Commas are stripped rather than kept. The script's MATCH is one
  * comma-separated string, so a title like "Warhammer 40,000" would otherwise
@@ -151,8 +151,14 @@ export function matchingAlerts(alerts, title) {
  * so "warhammer 40 000" still matches "Warhammer 40,000" exactly.
  */
 export async function buildMatchString(subscriberId) {
+  // Every saved term, not only the armed ones. These are the filters you set in
+  // the RSS view, and the script uses MATCH to decide whether a page you opened
+  // yourself is one you care about — a judgement that should follow everything
+  // you have said you are interested in. Buying is gated separately, by a
+  // ticket the listener issues, so a broad term appearing here cannot cause a
+  // purchase on its own.
   const { rows: terms } = await query(
-    'select term from alerts where subscriber_id = $1 and autobuy order by lower(term)',
+    'select term from alerts where subscriber_id = $1 order by lower(term)',
     [subscriberId],
   );
 
