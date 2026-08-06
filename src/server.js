@@ -10,7 +10,7 @@ import { getRates, ratesFor, startFx } from './fx.js';
 import { describeSmsFailure, sendSms, verificationMessage } from './notify.js';
 import { passwordProblem } from './auth.js';
 import { sendPush, testPush, topicUrl } from './push.js';
-import { addAlert, deleteAlert, listAlerts, updateAlert } from './alerts.js';
+import { addAlert, buildMatchString, deleteAlert, listAlerts, updateAlert } from './alerts.js';
 import { diagnoseTwilio } from './twilio-diagnose.js';
 import { adapterFor } from './platforms/index.js';
 import { pollerState, pollSite, runPoll, startPoller } from './poller.js';
@@ -23,12 +23,12 @@ import {
   clearVerificationCooldown,
   ensureBootstrapAccount,
   createAnonymousSubscriber,
-  getWatchNotifyMap,
+  getWatchSettings,
   getWatchedProductIds,
   normalizePhone,
   rotatePushTopic,
   setPushEnabled,
-  setWatchNotify,
+  setWatchSettings,
   setWatches,
   startVerification,
   subscriberByFeedToken,
@@ -582,7 +582,7 @@ app.post(
         watches,
         feedToken: result.subscriber.feed_token,
         keyword: result.subscriber.keyword ?? '',
-        notify: await getWatchNotifyMap(result.subscriber.id),
+        notify: await getWatchSettings(result.subscriber.id),
       });
     } catch (err) {
       next(err);
@@ -613,7 +613,8 @@ app.get('/api/me', async (req, res, next) => {
       feedToken: subscriber.feed_token,
       keyword: subscriber.keyword ?? '',
       watches: await getWatchedProductIds(subscriber.id),
-      notify: await getWatchNotifyMap(subscriber.id),
+      notify: await getWatchSettings(subscriber.id),
+      match: await buildMatchString(subscriber.id),
     });
   } catch (err) {
     next(err);
@@ -624,7 +625,12 @@ app.put('/api/watches', withSubscriber, async (req, res, next) => {
   try {
     const ids = Array.isArray(req.body?.productIds) ? req.body.productIds : [];
     const saved = await setWatches(req.subscriber.id, ids);
-    res.json({ ok: true, watches: saved, max: config.maxWatchesPerSubscriber });
+    res.json({
+      ok: true,
+      watches: saved,
+      max: config.maxWatchesPerSubscriber,
+      match: await buildMatchString(req.subscriber.id),
+    });
   } catch (err) {
     next(err);
   }
@@ -670,7 +676,7 @@ app.post(
         feedToken: result.subscriber.feed_token,
         keyword: result.subscriber.keyword ?? '',
         watches: await getWatchedProductIds(result.subscriber.id),
-        notify: await getWatchNotifyMap(result.subscriber.id),
+        notify: await getWatchSettings(result.subscriber.id),
       });
     } catch (err) {
       next(err);
@@ -820,7 +826,10 @@ app.post('/api/alerts', requireSubscriber, async (req, res, next) => {
       return res.status(status).json({ error: result.error, message });
     }
 
-    res.status(201).json({ alert: result.alert });
+    res.status(201).json({
+      alert: result.alert,
+      match: await buildMatchString(req.subscriber.id),
+    });
   } catch (err) {
     next(err);
   }
@@ -833,7 +842,7 @@ app.patch('/api/alerts/:id', requireSubscriber, async (req, res, next) => {
       autobuy: req.body?.autobuy,
     });
     if (!alert) return res.status(404).json({ error: 'not_found' });
-    res.json({ alert });
+    res.json({ alert, match: await buildMatchString(req.subscriber.id) });
   } catch (err) {
     next(err);
   }
@@ -843,7 +852,7 @@ app.delete('/api/alerts/:id', requireSubscriber, async (req, res, next) => {
   try {
     const ok = await deleteAlert(req.subscriber.id, Number(req.params.id));
     if (!ok) return res.status(404).json({ error: 'not_found' });
-    res.json({ ok: true });
+    res.json({ ok: true, match: await buildMatchString(req.subscriber.id) });
   } catch (err) {
     next(err);
   }
@@ -899,26 +908,45 @@ app.post('/api/dispatch/claim', requireSubscriber, async (req, res, next) => {
  * delivery channel is actually required — which is the point of keeping
  * watching and being notified separate.
  */
-app.put('/api/watches/:productId/notify', withSubscriber, async (req, res, next) => {
+app.patch('/api/watches/:productId', withSubscriber, async (req, res, next) => {
   try {
-    const notify = Boolean(req.body?.notify);
     const productId = Number(req.params.productId);
     if (!Number.isFinite(productId)) return res.status(400).json({ error: 'bad_product' });
 
-    const canText = req.subscriber.verified && req.subscriber.phone;
-    const canPush = req.subscriber.ntfy_enabled && req.subscriber.ntfy_topic;
-    if (notify && !canText && !canPush) {
-      return res.status(403).json({
-        error: 'no_channel',
-        message: config.smsEnabled
-          ? 'Turn on push notifications or add a phone number first.'
-          : 'Turn on push notifications first — Account, then Push notifications.',
-      });
+    // Notifying needs somewhere to send to; arming the buyer does not, because
+    // that is collected by the userscript rather than delivered anywhere.
+    if (req.body?.notify === true) {
+      const canText = req.subscriber.verified && req.subscriber.phone;
+      const canPush = req.subscriber.ntfy_enabled && req.subscriber.ntfy_topic;
+      if (!canText && !canPush) {
+        return res.status(403).json({
+          error: 'no_channel',
+          message: config.smsEnabled
+            ? 'Turn on push notifications or add a phone number first.'
+            : 'Turn on push notifications first — Account, then Push notifications.',
+        });
+      }
     }
 
-    const ok = await setWatchNotify(req.subscriber.id, productId, notify);
-    if (!ok) return res.status(404).json({ error: 'not_watched' });
-    res.json({ ok: true, productId, notify });
+    const watch = await setWatchSettings(req.subscriber.id, productId, {
+      notify: req.body?.notify,
+      autobuy: req.body?.autobuy,
+    });
+    if (!watch) return res.status(404).json({ error: 'not_watched' });
+    res.json({ ok: true, watch, match: await buildMatchString(req.subscriber.id) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * The MATCH line for the buyer userscript, rebuilt from whatever is currently
+ * armed. Returned by every route that can change it as well, so the copyable
+ * text on the page is never a step behind what it describes.
+ */
+app.get('/api/match', requireSubscriber, async (req, res, next) => {
+  try {
+    res.json({ match: await buildMatchString(req.subscriber.id) });
   } catch (err) {
     next(err);
   }

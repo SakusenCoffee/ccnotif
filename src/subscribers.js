@@ -208,22 +208,33 @@ export async function setWatches(subscriberId, productIds) {
   return ids;
 }
 
-/** Which of a subscriber's watches are set to text them. */
-export async function getWatchNotifyMap(subscriberId) {
+/** Both switches for every watched product, keyed by product id. */
+export async function getWatchSettings(subscriberId) {
   const { rows } = await query(
-    'select product_id, notify from watches where subscriber_id = $1',
+    'select product_id, notify, autobuy from watches where subscriber_id = $1',
     [subscriberId],
   );
-  return Object.fromEntries(rows.map((r) => [r.product_id, r.notify]));
+  return Object.fromEntries(
+    rows.map((r) => [r.product_id, { notify: r.notify, autobuy: r.autobuy }]),
+  );
 }
 
-/** Turn texting on or off for one watched product. */
-export async function setWatchNotify(subscriberId, productId, notify) {
-  const { rowCount } = await query(
-    'update watches set notify = $3 where subscriber_id = $1 and product_id = $2',
-    [subscriberId, productId, Boolean(notify)],
+/** Set either switch on one watched product. Only the fields given are touched. */
+export async function setWatchSettings(subscriberId, productId, { notify, autobuy }) {
+  const { rows } = await query(
+    `update watches
+        set notify  = coalesce($3, notify),
+            autobuy = coalesce($4, autobuy)
+      where subscriber_id = $1 and product_id = $2
+      returning product_id, notify, autobuy`,
+    [
+      subscriberId,
+      productId,
+      typeof notify === 'boolean' ? notify : null,
+      typeof autobuy === 'boolean' ? autobuy : null,
+    ],
   );
-  return rowCount > 0;
+  return rows[0] ?? null;
 }
 
 /**

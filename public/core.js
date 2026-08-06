@@ -10,6 +10,7 @@ export const state = {
   phone: null,
   feedToken: null,
   alerts: [],
+  match: '',
   watchedOnly: false,
   notify: {},
   username: null,

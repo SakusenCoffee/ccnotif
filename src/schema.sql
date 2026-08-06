@@ -145,6 +145,11 @@ create index if not exists watches_product_idx on watches (product_id);
 -- the default never applies to them.
 alter table watches add column if not exists notify boolean not null default true;
 
+-- The second switch, matching the one a standing alert has: hand this product
+-- to the buyer userscript when it becomes buyable. Off by default — arming a
+-- purchase is never something to infer from someone ticking "watch".
+alter table watches add column if not exists autobuy boolean not null default false;
+
 -- Standing alerts, one term per row.
 --
 -- This began as a single comma-separated text field on the subscriber, which

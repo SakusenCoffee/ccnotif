@@ -63,6 +63,23 @@ there is one definition of what counts and it is the one you can edit.
 Matching is loose on words and exact on codes: `one piece` also finds OnePiece,
 One-Piece and OP; `OP-17` finds OP-17 and OP17 but never OP-18.
 
+Watched products carry the same two switches, so a single product can be armed
+without setting up a term for it.
+
+## The buyer's MATCH line
+
+The footer shows a generated, copyable line built from everything currently
+armed for buying — alert terms and watched products with Auto-buy on. Paste it
+as the `MATCH` value in the userscript.
+
+The script gets its actual work from the server (`/api/dispatch`), so this only
+covers the one case the server cannot: a product page you open yourself, where
+nothing was dispatched and the script has to decide locally. Commas inside
+product titles are replaced with spaces, because `MATCH` is one comma-separated
+string and `Warhammer 40,000` would otherwise split into two terms that match
+nothing — the substitution is safe, since the matcher treats any run of
+non-alphanumerics as a separator.
+
 ## Configuration
 
 See `.env.example`.

@@ -21,7 +21,24 @@ function escapeRegExp(str) {
 }
 
 const MAX_TERMS = 12;
-const MAX_TERM_LENGTH = 60;
+// Long enough for a real product title, which is what a watched item armed for
+// buying contributes.
+const MAX_TERM_LENGTH = 160;
+
+/**
+ * Shorten a term without splitting a word.
+ *
+ * Cutting mid-token silently breaks the match rather than narrowing it: a term
+ * ending "…[991" demands that "991" be followed by a non-alphanumeric, and in
+ * the title it is followed by more digits, so it matches nothing at all. Cutting
+ * at a separator leaves a shorter phrase that still matches what it names.
+ */
+function clampTerm(term) {
+  if (term.length <= MAX_TERM_LENGTH) return term;
+  const cut = term.slice(0, MAX_TERM_LENGTH);
+  const lastBreak = cut.search(/[^a-z0-9]+[a-z0-9]*$/i);
+  return (lastBreak > 0 ? cut.slice(0, lastBreak) : cut).trim();
+}
 
 /**
  * Strip accents, so "pokemon" finds "Pokémon". Stores are inconsistent about
@@ -46,7 +63,8 @@ export function parseTerms(input) {
         .split(/[,\n]/)
         .map((term) => fold(term).trim())
         .filter(Boolean)
-        .map((term) => term.slice(0, MAX_TERM_LENGTH)),
+        .map(clampTerm)
+        .filter(Boolean),
     ),
   ].slice(0, MAX_TERMS);
 }

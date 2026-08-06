@@ -83,39 +83,46 @@ function card(product) {
   // is the decision this view exists to let you make. It is per product: you
   // can follow a dozen things and be woken by one.
   if (state.watchedOnly) {
-    const bell = document.createElement('button');
-    bell.type = 'button';
-    // Named after what actually happens on this deployment: with SMS off these
-    // are push notifications, and calling them texts is simply untrue.
-    const on = state.notify[product.id];
+    // The same two switches a standing alert has, for the same reason: telling
+    // you about a restock and acting on it are different decisions, and a
+    // watched product may deserve one without the other.
+    const settings = state.notify[product.id] ?? { notify: false, autobuy: false };
+
+    const toggle = (field, label, title, extraClass = '') => {
+      const on = Boolean(settings[field]);
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = `notify-toggle ${extraClass} ${on ? 'on' : ''}`.trim();
+      button.textContent = label;
+      button.title = title;
+
+      button.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        button.disabled = true;
+        try {
+          const data = await api(`/api/watches/${product.id}`, {
+            method: 'PATCH',
+            body: { [field]: !on },
+          });
+          state.notify[product.id] = {
+            notify: data.watch.notify,
+            autobuy: data.watch.autobuy,
+          };
+          adoptMatch(data);
+          renderGrid();
+        } catch (err) {
+          // The one place a delivery channel is genuinely needed. Ask for it
+          // here rather than up front, so watching never demanded one.
+          if (err.data?.error === 'no_channel') openDialog('account');
+          else showError('#store-error', err.message);
+          button.disabled = false;
+        }
+      });
+      return button;
+    };
+
     const noun = state.smsEnabled ? 'text' : 'alert';
-    bell.className = 'notify-toggle' + (on ? ' on' : '');
-    bell.textContent = on ? `${noun === 'text' ? 'Texting' : 'Alerting'} on` : `${noun === 'text' ? 'Text' : 'Alert'} me`;
-    bell.title = on
-      ? `You get a${noun === 'alert' ? 'n' : ''} ${noun} when this changes`
-      : `Get a${noun === 'alert' ? 'n' : ''} ${noun} when this changes`;
-
-    bell.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      e.preventDefault();
-      const next = !state.notify[product.id];
-      bell.disabled = true;
-      try {
-        await api(`/api/watches/${product.id}/notify`, {
-          method: 'PUT',
-          body: { notify: next },
-        });
-        state.notify[product.id] = next;
-        renderGrid();
-      } catch (err) {
-        // The one place a phone number is genuinely needed. Ask for it here
-        // rather than up front, so watching never demanded one.
-        if (err.data?.error === 'no_channel') openDialog('account');
-        else showError('#store-error', err.message);
-        bell.disabled = false;
-      }
-    });
-
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.className = 'remove-watch';
@@ -123,16 +130,16 @@ function card(product) {
     remove.title = 'Stop watching this';
 
     remove.addEventListener('click', async (e) => {
-      // The label around the card toggles selection; this must not do that too.
       e.stopPropagation();
       e.preventDefault();
       remove.disabled = true;
       try {
         const next = [...state.saved].filter((id) => id !== product.id);
-        await api('/api/watches', { method: 'PUT', body: { productIds: next } });
+        const data = await api('/api/watches', { method: 'PUT', body: { productIds: next } });
         state.saved = new Set(next);
         state.selected = new Set(next);
         delete state.notify[product.id];
+        adoptMatch(data);
         // Reload rather than splicing the card out: the Watched view is a
         // server-side filter, so the grid it should now show is the server's
         // answer, not a guess at it.
@@ -146,7 +153,11 @@ function card(product) {
 
     const actions = document.createElement('span');
     actions.className = 'watch-actions';
-    actions.append(bell, remove);
+    actions.append(
+      toggle('notify', `${noun === 'text' ? 'Text' : 'Notify'} me`, `Get an ${noun} when this changes`),
+      toggle('autobuy', 'Auto-buy', 'Hand this to the buyer script when it becomes buyable', 'buy'),
+      remove,
+    );
     label.querySelector('.card-body').append(actions);
   }
 
@@ -295,6 +306,8 @@ async function loadMe() {
   state.phone = me.phone ?? null;
   state.feedToken = me.feedToken ?? null;
   state.notify = me.notify ?? {};
+  state.match = me.match ?? '';
+  renderMatch();
   state.username = me.username ?? null;
   state.hasAccount = Boolean(me.hasAccount);
   state.push = me.push ?? { enabled: false, topic: null, url: null };
@@ -554,6 +567,7 @@ function syncFeedControls() {
     ? 'One term at a time. “one piece” also finds OnePiece and OP; “OP-17” matches only that set.'
     : 'Add terms now, but nothing can reach you yet — turn on push notifications under Account.';
   loadAlerts();
+  renderWatchedDrop();
 }
 
 async function loadFeed() {
@@ -600,6 +614,35 @@ $('#feed-scope').addEventListener('click', (e) => {
 $('#feed-btn').addEventListener('click', () => showFeed(!showingFeed));
 $('#feed-back-btn').addEventListener('click', () => showFeed(false));
 
+// --- the buyer's MATCH line -------------------------------------------------
+//
+// Kept in the footer rather than inside the alerts view, because it describes
+// the state of the whole account and is the thing you go looking for while
+// editing the userscript in another window. Every route that can change what is
+// armed returns the new value, so this never lags behind what it describes.
+
+function renderMatch() {
+  const value = state.match ?? '';
+  $('#match-text').value = value;
+  $('#match-note').textContent = value
+    ? `${value.split(',').length} armed for buying. Paste this as the MATCH value.`
+    : 'Nothing is armed for buying yet. Turn on Auto-buy for an alert or a watched product.';
+}
+
+/** Adopt a MATCH value returned alongside some other change. */
+function adoptMatch(data) {
+  if (typeof data?.match === 'string') {
+    state.match = data.match;
+    renderMatch();
+  }
+}
+
+$('#match-copy').addEventListener('click', async () => {
+  await navigator.clipboard.writeText($('#match-text').value).catch(() => {});
+  $('#match-copy').textContent = 'Copied';
+  setTimeout(() => ($('#match-copy').textContent = 'Copy'), 1500);
+});
+
 // --- standing alerts --------------------------------------------------------
 //
 // One term at a time, each row carrying its own two switches. A single
@@ -644,6 +687,7 @@ function renderAlerts() {
             body: { [field]: !alert[field] },
           });
           Object.assign(alert, data.alert);
+          adoptMatch(data);
           renderAlerts();
         } catch (err) {
           showError('#alert-error', err.data?.message ?? err.message);
@@ -666,8 +710,9 @@ function renderAlerts() {
     remove.addEventListener('click', async () => {
       remove.disabled = true;
       try {
-        await api(`/api/alerts/${alert.id}`, { method: 'DELETE' });
+        const data = await api(`/api/alerts/${alert.id}`, { method: 'DELETE' });
         state.alerts = state.alerts.filter((a) => a.id !== alert.id);
+        adoptMatch(data);
         renderAlerts();
       } catch (err) {
         showError('#alert-error', err.data?.message ?? err.message);
@@ -676,6 +721,72 @@ function renderAlerts() {
     });
 
     li.append(term, switches, remove);
+    list.append(li);
+  }
+}
+
+/**
+ * The watched products, listed inside the alerts view.
+ *
+ * Same information as the Watched tab, but here you are looking at what will
+ * fire and why — so it belongs beside the alert terms rather than a tab away.
+ */
+function renderWatchedDrop() {
+  const list = $('#watched-list');
+  const watched = state.products.filter((p) => state.saved.has(p.id));
+  list.replaceChildren();
+
+  $('#watched-count').textContent = state.saved.size ? `(${state.saved.size})` : '(none)';
+
+  if (!state.saved.size) {
+    const li = document.createElement('li');
+    li.className = 'alert-empty';
+    li.textContent = 'Nothing watched yet. Tick products in the main list.';
+    list.append(li);
+    return;
+  }
+
+  if (!watched.length) {
+    // The grid holds whatever the current filters returned, which may not
+    // include everything watched. Say so rather than showing a short list that
+    // looks like the whole of it.
+    const li = document.createElement('li');
+    li.className = 'alert-empty';
+    li.textContent = 'Open the Watched tab to see them all — the current filters hide some.';
+    list.append(li);
+    return;
+  }
+
+  for (const product of watched) {
+    const settings = state.notify[product.id] ?? {};
+    const status = statusOf(product);
+
+    const li = document.createElement('li');
+    li.className = 'watched-row';
+
+    const badge = document.createElement('span');
+    badge.className = `badge ${status.cls}`;
+    badge.textContent = status.label;
+
+    const title = document.createElement('span');
+    title.className = 'w-title';
+    const link = document.createElement('a');
+    link.href = product.url;
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.textContent = product.title;
+    title.append(link);
+
+    const flags = document.createElement('span');
+    flags.className = 'alert-switches';
+    for (const [field, label] of [['notify', 'Notify'], ['autobuy', 'Auto-buy']]) {
+      const tag = document.createElement('span');
+      tag.className = `alert-switch ${field === 'autobuy' ? 'buy' : ''} ${settings[field] ? 'on' : ''}`.trim();
+      tag.textContent = label;
+      flags.append(tag);
+    }
+
+    li.append(badge, title, flags);
     list.append(li);
   }
 }
@@ -704,6 +815,7 @@ async function addAlertTerm() {
     state.alerts = [...state.alerts, data.alert].sort((a, b) =>
       a.term.localeCompare(b.term),
     );
+    adoptMatch(data);
     input.value = '';
     renderAlerts();
     input.focus();

@@ -427,3 +427,32 @@ dialog input { width: 100%; }
   padding: 16px; text-align: center;
   border: 1px dashed var(--pw-line); border-radius: 10px;
 }
+
+/* The generated MATCH line, kept on screen in the footer whatever view is open. */
+.match-bar {
+  margin-bottom: 22px; padding: 12px 14px;
+  border: 1px solid var(--pw-line); border-radius: 10px;
+  background: color-mix(in srgb, var(--pw-panel) 60%, transparent);
+}
+.match-bar label { display: block; font-size: 12px; color: var(--pw-muted); margin-bottom: 7px; }
+.match-bar code { color: var(--pw-accent); font-size: 11.5px; }
+.match-bar input { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
+.match-bar .muted { margin-top: 7px; }
+
+/* Watched products, listed inside the RSS view. */
+.watched-drop { margin-top: 18px; }
+.watched-drop summary {
+  cursor: pointer; font-size: 12.5px; color: var(--pw-muted);
+  padding: 6px 0; user-select: none;
+}
+.watched-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.watched-row {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 10px; border: 1px solid var(--pw-line); border-radius: 9px;
+}
+.watched-row .w-title { flex: 1; min-width: 140px; font-size: 12.5px; }
+.watched-row .w-title a { color: var(--pw-text); text-decoration: none; }
+.watched-row .w-title a:hover { color: var(--pw-accent); text-decoration: underline; }
+.watched-row .badge { align-self: center; }
+
+.notify-toggle.buy.on { color: var(--pw-accent); border-color: var(--pw-accent); }

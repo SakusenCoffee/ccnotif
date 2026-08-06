@@ -226,25 +226,41 @@ async function notifyRestocks(restockEvents) {
   for (const event of restockEvents) {
     const { rows: watchers } = await query(
       `select s.id, s.phone, s.verified, s.feed_token, s.ntfy_topic, s.ntfy_enabled,
-              si.currency
+              w.notify, w.autobuy, si.currency
          from watches w
          join subscribers s on s.id = w.subscriber_id
          join products p on p.id = w.product_id
          join sites si on si.id = p.site_id
         where w.product_id = $1
-          -- Watching is open to anyone; being notified is not. A watch only
-          -- reaches someone if it was switched on for this product *and* there
-          -- is somewhere to send it — a verified number, a push topic, or both.
-          and w.notify
           and s.unsubscribed_at is null
-          and ((s.verified and s.phone is not null)
-               or (s.ntfy_enabled and s.ntfy_topic is not null))
+          -- Either switch is a reason to be here. Notifying additionally needs
+          -- somewhere to send to; arming the buyer does not, since that is
+          -- collected by the userscript rather than delivered.
+          and (w.autobuy
+               or (w.notify
+                   and ((s.verified and s.phone is not null)
+                        or (s.ntfy_enabled and s.ntfy_topic is not null))))
           and (w.last_notified_at is null
                or w.last_notified_at < now() - ($2 || ' hours')::interval)`,
       [event.product_id, String(config.poll.cooldownHours)],
     );
 
     for (const watcher of watchers) {
+      // A watch can arm the buyer just as a standing alert can. Recorded here
+      // rather than delivered: the userscript asks for these when it is
+      // running, so a restock that happened while the browser was shut is
+      // still waiting when it opens.
+      if (watcher.autobuy) {
+        await query(
+          `insert into dispatches (subscriber_id, event_id, term)
+             values ($1,$2,$3)
+           on conflict do nothing`,
+          [watcher.id, event.id, 'watched'],
+        ).catch(() => {});
+      }
+
+      if (!watcher.notify) continue;
+
       // Every channel this person has, because someone who set up both wants
       // whichever arrives first, not an arbitrary one of the two.
       const results = [];

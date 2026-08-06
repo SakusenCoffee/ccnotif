@@ -134,3 +134,42 @@ export async function compiledAlertsBySubscriber() {
 export function matchingAlerts(alerts, title) {
   return alerts.filter((a) => a.matcher?.test(title));
 }
+
+/**
+ * The MATCH line for the buyer userscript.
+ *
+ * The script needs its own copy of what to act on for one case the server
+ * cannot cover: a product page you open yourself, where nothing has been
+ * dispatched and the script has to decide locally whether this is something you
+ * wanted. So it is built from exactly the things armed for buying — alert terms
+ * and watched products with Auto-buy on — and nothing else.
+ *
+ * Commas are stripped rather than kept. The script's MATCH is one
+ * comma-separated string, so a title like "Warhammer 40,000" would otherwise
+ * split into "warhammer 40" and "000" and match neither. Replacing the comma
+ * with a space is safe: the matcher joins words with "any non-alphanumerics",
+ * so "warhammer 40 000" still matches "Warhammer 40,000" exactly.
+ */
+export async function buildMatchString(subscriberId) {
+  const { rows: terms } = await query(
+    'select term from alerts where subscriber_id = $1 and autobuy order by lower(term)',
+    [subscriberId],
+  );
+
+  const { rows: watched } = await query(
+    `select p.title
+       from watches w
+       join products p on p.id = w.product_id
+      where w.subscriber_id = $1 and w.autobuy
+      order by lower(p.title)`,
+    [subscriberId],
+  );
+
+  const parts = [...terms.map((r) => r.term), ...watched.map((r) => r.title)]
+    .map((t) => String(t).replace(/[,\n\r]+/g, ' ').replace(/\s+/g, ' ').trim())
+    // A single quote would close the string it is pasted into.
+    .map((t) => t.replace(/'/g, ''))
+    .filter(Boolean);
+
+  return [...new Set(parts.map((p) => p.toLowerCase()))].join(', ');
+}
