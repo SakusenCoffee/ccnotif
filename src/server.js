@@ -6,11 +6,12 @@ import { assertConfig, config } from './config.js';
 import { dbState, initDb, query } from './db.js';
 import { discoverSite } from './discover.js';
 import { getFeedItems, parseTypes, renderRss } from './feed.js';
-import { sendSms, verificationMessage } from './notify.js';
+import { describeSmsFailure, sendSms, verificationMessage } from './notify.js';
 import { pollerState, pollSite, runPoll, startPoller } from './poller.js';
 import { addSite, deleteSite, getSite, listSites, updateSite } from './sites.js';
 import {
   checkVerification,
+  clearVerificationCooldown,
   getWatchedProductIds,
   normalizePhone,
   setWatches,
@@ -287,7 +288,20 @@ app.post(
       if (retryAfter) return res.status(429).json({ error: 'cooldown', retryAfter });
 
       const result = await sendSms(phone, verificationMessage(code));
-      if (!result.ok) return res.status(502).json({ error: 'sms_failed', detail: result.error });
+      if (!result.ok) {
+        // The code never reached the carrier, so don't hold the caller to the
+        // resend cooldown for a message they never got.
+        await clearVerificationCooldown(phone);
+
+        // Never 502 here: that is indistinguishable from the platform's own
+        // gateway errors and sends you hunting the wrong problem.
+        const failure = describeSmsFailure(result);
+        return res.status(failure.status).json({
+          error: 'sms_failed',
+          message: failure.message,
+          twilioCode: result.code ?? null,
+        });
+      }
 
       res.json({ ok: true, phone, ttlMinutes: config.verification.codeTtlMinutes });
     } catch (err) {

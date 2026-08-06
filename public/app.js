@@ -220,15 +220,18 @@ function showError(id, message) {
 const ERRORS = {
   invalid_phone: "That doesn't look like a mobile number that can receive texts.",
   cooldown: 'A code was just sent. Give it a moment before requesting another.',
-  sms_failed: 'We could not send the text. Check the number and try again.',
   expired: 'That code expired. Request a new one.',
   too_many: 'Too many wrong attempts. Request a new code.',
   mismatch: 'That code is not right.',
   no_code: 'Request a code first.',
   rate_limited: 'Too many attempts from this network. Try again shortly.',
+  database_unavailable: 'The server is not connected to its database yet.',
 };
 
 function errorText(err) {
+  // The server explains SMS failures precisely (which Twilio code, what to do
+  // about it). Prefer that over any generic text mapped here.
+  if (err.data?.message) return err.data.message;
   return ERRORS[err.data?.error] ?? ERRORS[err.message] ?? err.message ?? 'Something went wrong.';
 }
 

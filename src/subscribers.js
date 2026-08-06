@@ -66,6 +66,19 @@ export async function startVerification(phone) {
   return { subscriber, code };
 }
 
+/**
+ * Undo the resend cooldown after a send that never reached the carrier. The
+ * cooldown exists to stop repeat requests for a code that is already in flight;
+ * when the send failed there is no such code, and making someone wait a minute
+ * between attempts while they fix a Twilio setting is just obstructive.
+ */
+export async function clearVerificationCooldown(phone) {
+  await query(
+    'update subscribers set code_sent_at = null, code_hash = null, code_expires_at = null where phone = $1',
+    [phone],
+  );
+}
+
 export async function checkVerification(phone, code) {
   const { rows } = await query('select * from subscribers where phone = $1', [phone]);
   const subscriber = rows[0];

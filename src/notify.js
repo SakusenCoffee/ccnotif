@@ -37,9 +37,86 @@ export async function sendSms(to, body) {
         [to],
       ).catch(() => {});
     }
-    console.error(`[sms] failed to ${to}: ${err.message}`);
+    console.error(
+      `[sms] failed to ${to}: [${err?.code ?? 'no code'}] ${err.message}` +
+        (err?.moreInfo ? ` (${err.moreInfo})` : ''),
+    );
     return { ok: false, sid: null, error: err.message, code: err?.code };
   }
+}
+
+/**
+ * Turn a Twilio error code into something the person staring at the dialog can
+ * act on. Twilio's own message is written for the account owner reading API
+ * docs, not for someone who just typed their phone number in.
+ *
+ * `status` is the HTTP code to answer with: 400 when the recipient is the
+ * problem, 500 when the Twilio account or its configuration is.
+ */
+const TWILIO_ERRORS = {
+  20003: {
+    status: 500,
+    message:
+      'Twilio rejected the credentials. Check TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN.',
+  },
+  21211: { status: 400, message: 'Twilio does not recognise that phone number.' },
+  21408: {
+    status: 500,
+    message:
+      'This Twilio account is not enabled for sending to that country. Enable the region ' +
+      'under Messaging → Geo permissions.',
+  },
+  21606: {
+    status: 500,
+    message:
+      'TWILIO_FROM_NUMBER is not a number on this account, or cannot send SMS. Use an ' +
+      'SMS-capable Twilio number in E.164 form, e.g. +15551234567.',
+  },
+  21610: {
+    status: 400,
+    message: 'That number replied STOP to an earlier message. Text START to the same number to opt back in.',
+  },
+  21612: {
+    status: 500,
+    message: 'Twilio cannot route from your number to that one. Try a Messaging Service instead.',
+  },
+  21614: { status: 400, message: 'That number cannot receive SMS — it looks like a landline.' },
+  21659: {
+    status: 500,
+    message:
+      'TWILIO_FROM_NUMBER is not a valid sending number for this account. Check it matches a ' +
+      'number you own, in E.164 form.',
+  },
+  63038: {
+    status: 500,
+    message: 'This Twilio account has hit its daily message limit.',
+  },
+};
+
+// Trial accounts refuse any destination that has not been verified in the
+// console. It is the single most common first-run failure, so it gets the
+// longest explanation.
+const TRIAL_UNVERIFIED = {
+  status: 400,
+  message:
+    'This is a Twilio trial account, which can only text numbers you have verified. ' +
+    'Add this number under Phone Numbers → Verified Caller IDs in the Twilio console, ' +
+    'or upgrade the account.',
+};
+
+export function describeSmsFailure(result) {
+  if (result.code === 21608) return TRIAL_UNVERIFIED;
+  const known = TWILIO_ERRORS[result.code];
+  if (known) return known;
+
+  // Unmapped: pass Twilio's own text through rather than hiding it, with the
+  // code so it can be looked up.
+  return {
+    status: 500,
+    message: result.code
+      ? `Twilio error ${result.code}: ${result.error}`
+      : (result.error ?? 'The text could not be sent.'),
+  };
 }
 
 export function verificationMessage(code) {

@@ -130,6 +130,23 @@ For inbound STOP handling, point your Twilio number's "A message comes in" webho
 at `https://<your-domain>/twilio/inbound`. The endpoint verifies Twilio's request
 signature and rejects anything unsigned.
 
+#### Trial accounts
+
+A Twilio trial account can **only text numbers you have verified**, including your
+own. Add each one under **Phone Numbers → Manage → Verified Caller IDs** in the
+console, or upgrade the account. Sending to an unverified number fails with code
+`21608`, and the app says so directly in the dialog.
+
+Trial accounts also prefix every message with "Sent from your Twilio trial
+account -", which eats into the 160-character segment.
+
+When a send fails, the exact Twilio code is written to the logs with a link to
+Twilio's docs:
+
+```
+[sms] failed to +15551234567: [21608] The number +1... is unverified (https://www.twilio.com/docs/errors/21608)
+```
+
 ## Running locally
 
 ```bash
