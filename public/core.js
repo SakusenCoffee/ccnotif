@@ -9,7 +9,7 @@ export const state = {
   signedIn: false,
   phone: null,
   feedToken: null,
-  keyword: '',
+  alerts: [],
   watchedOnly: false,
   notify: {},
   username: null,

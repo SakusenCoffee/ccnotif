@@ -10,6 +10,7 @@ import { getRates, ratesFor, startFx } from './fx.js';
 import { describeSmsFailure, sendSms, verificationMessage } from './notify.js';
 import { passwordProblem } from './auth.js';
 import { sendPush, testPush, topicUrl } from './push.js';
+import { addAlert, deleteAlert, listAlerts, updateAlert } from './alerts.js';
 import { diagnoseTwilio } from './twilio-diagnose.js';
 import { adapterFor } from './platforms/index.js';
 import { pollerState, pollSite, runPoll, startPoller } from './poller.js';
@@ -26,7 +27,6 @@ import {
   getWatchedProductIds,
   normalizePhone,
   rotatePushTopic,
-  setKeyword,
   setPushEnabled,
   setWatchNotify,
   setWatches,
@@ -786,23 +786,118 @@ app.post('/api/push/rotate', requireSubscriber, async (req, res, next) => {
   }
 });
 
-/**
- * The standing alert: text me about anything matching this, watchlist or not.
- * Stored as typed; `terms` comes back so the UI can show what will actually be
- * matched on, which is not always what someone thinks they typed.
- */
-app.put('/api/keyword', requireSubscriber, async (req, res, next) => {
+// --- standing alerts --------------------------------------------------------
+//
+// One term per row, each with two switches: notify (push/SMS) and autobuy
+// (offer the match to the buyer userscript). They are separate because the
+// useful combinations differ — a broad term like "pokemon" is worth being told
+// about but not worth arming a buyer for; an exact set code like "OP-17" is the
+// reverse, since you already know you want it and the seconds matter.
+
+app.get('/api/alerts', requireSubscriber, async (req, res, next) => {
   try {
-    const saved = await setKeyword(req.subscriber.id, req.body?.keyword ?? '');
-    res.json({ ok: true, ...saved });
+    res.json({ alerts: await listAlerts(req.subscriber.id) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/alerts', requireSubscriber, async (req, res, next) => {
+  try {
+    const result = await addAlert(req.subscriber.id, req.body?.term, {
+      notify: req.body?.notify ?? true,
+      autobuy: req.body?.autobuy ?? false,
+    });
+
+    const problems = {
+      empty: [400, 'Type something to alert on.'],
+      unusable: [400, 'That has no letters or numbers to match on.'],
+      duplicate: [409, 'You are already alerting on that.'],
+      too_many: [400, `That is the most alerts one account can have (${result.max}).`],
+    };
+    if (result.error) {
+      const [status, message] = problems[result.error] ?? [400, 'That alert could not be added.'];
+      return res.status(status).json({ error: result.error, message });
+    }
+
+    res.status(201).json({ alert: result.alert });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.patch('/api/alerts/:id', requireSubscriber, async (req, res, next) => {
+  try {
+    const alert = await updateAlert(req.subscriber.id, Number(req.params.id), {
+      notify: req.body?.notify,
+      autobuy: req.body?.autobuy,
+    });
+    if (!alert) return res.status(404).json({ error: 'not_found' });
+    res.json({ alert });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete('/api/alerts/:id', requireSubscriber, async (req, res, next) => {
+  try {
+    const ok = await deleteAlert(req.subscriber.id, Number(req.params.id));
+    if (!ok) return res.status(404).json({ error: 'not_found' });
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }
 });
 
 /**
- * Texting for one watched product. Turning it *on* is the only place a phone
- * number is actually required — which is the point of splitting the two.
+ * What the buyer userscript should act on.
+ *
+ * Matching happens here rather than in the script, so there is one definition
+ * of what counts and it is the one you can see and edit in the UI. Each match
+ * is handed over once: claiming it removes it from the queue, so a script that
+ * restarts does not re-open everything it has already dealt with.
+ */
+app.get('/api/dispatch', requireSubscriber, async (req, res, next) => {
+  try {
+    const { rows } = await query(
+      `select d.event_id, d.term, e.title, e.url, e.price, e.type, e.image_url,
+              s.currency
+         from dispatches d
+         join events e on e.id = d.event_id
+         join products p on p.id = e.product_id
+         join sites s on s.id = p.site_id
+        where d.subscriber_id = $1
+        order by d.event_id asc
+        limit 25`,
+      [req.subscriber.id],
+    );
+    res.json({ matches: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/dispatch/claim', requireSubscriber, async (req, res, next) => {
+  try {
+    const ids = Array.isArray(req.body?.eventIds)
+      ? req.body.eventIds.map(Number).filter(Number.isFinite)
+      : [];
+    if (!ids.length) return res.json({ ok: true, claimed: 0 });
+
+    const { rowCount } = await query(
+      'delete from dispatches where subscriber_id = $1 and event_id = any($2::bigint[])',
+      [req.subscriber.id, ids],
+    );
+    res.json({ ok: true, claimed: rowCount });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Notifications for one watched product. Turning it *on* is the only place a
+ * delivery channel is actually required — which is the point of keeping
+ * watching and being notified separate.
  */
 app.put('/api/watches/:productId/notify', withSubscriber, async (req, res, next) => {
   try {

@@ -55,11 +55,24 @@ export const config = {
     : null,
 
   poll: {
-    // As fast as the stores will allow. A tick that lands while the previous
-    // run is still going is dropped, so this is a floor on the gap between
-    // polls, not a promise of one per second — a full sweep simply takes as
-    // long as it takes, and the next one starts straight after.
-    intervalMs: int(process.env.POLL_INTERVAL_SECONDS, 1) * 1000,
+    // Fast enough to be useful, slow enough not to get blocked.
+    //
+    // A poll costs one request per watched section, so the request rate is the
+    // interval divided by however many sections you watch — not the interval
+    // itself. At one second across eleven sections that is eleven requests a
+    // second, about forty thousand an hour, and the store started refusing all
+    // of them. Fifteen seconds across the same eleven is under one a second,
+    // which sits inside what a public storefront tolerates.
+    //
+    // Lower it if you watch one small section; the per-host pacing below is
+    // what actually keeps a burst civil either way.
+    intervalMs: int(process.env.POLL_INTERVAL_SECONDS, 15) * 1000,
+
+    // Minimum gap between two requests to the same store, whatever the
+    // interval. This is the real protection: it turns a poll of eleven
+    // sections from a burst into a queue, so no single tick can spike the
+    // rate however the interval is set.
+    requestGapMs: int(process.env.STORE_REQUEST_GAP_MS, 700),
     enabled: bool(process.env.POLL_ENABLED, true),
     // Don't text the same person about the same product twice inside this
     // window. Shopify inventory flaps; this keeps a flapping product from

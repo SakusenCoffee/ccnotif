@@ -52,18 +52,21 @@
           <button class="linkish inline" id="feed-back-btn" type="button">Back to pre-orders</button>
         </div>
 
-        <label for="keyword">Alert me about anything matching</label>
+        <label for="keyword">Alert me when a title matches</label>
         <div class="copy-row">
           <input
             id="keyword"
             type="text"
-            placeholder="one piece, pokemon"
+            placeholder="OP-17"
             autocomplete="off"
             spellcheck="false"
           />
-          <button class="primary" id="keyword-save-btn" type="button">Save</button>
+          <button class="primary" id="keyword-save-btn" type="button">Add</button>
         </div>
         <p class="muted small" id="keyword-hint"></p>
+        <p class="error" id="alert-error" hidden></p>
+
+        <ul class="alert-list" id="alert-list"></ul>
 
         <details class="feed-address">
           <summary>Read this in a feed reader instead</summary>

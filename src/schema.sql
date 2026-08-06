@@ -145,6 +145,39 @@ create index if not exists watches_product_idx on watches (product_id);
 -- the default never applies to them.
 alter table watches add column if not exists notify boolean not null default true;
 
+-- Standing alerts, one term per row.
+--
+-- This began as a single comma-separated text field on the subscriber, which
+-- could only ever be all-or-nothing: every term notified, or none did. Two
+-- independent decisions turn out to matter per term — whether it should reach
+-- your phone, and whether it should arm the buyer — and a single string has
+-- nowhere to record them.
+create table if not exists alerts (
+  id            bigserial   primary key,
+  subscriber_id bigint      not null references subscribers (id) on delete cascade,
+  term          text        not null,
+  -- Send a push/SMS when this matches.
+  notify        boolean     not null default true,
+  -- Offer the match to the buyer userscript, which opens the product.
+  autobuy       boolean     not null default false,
+  created_at    timestamptz not null default now()
+);
+
+-- Case-insensitively unique per person: "OP-17" and "op-17" are one alert.
+create unique index if not exists alerts_subscriber_term_idx
+  on alerts (subscriber_id, lower(term));
+
+-- Carry the old single field across. Terms were comma-separated, and every one
+-- of them notified, so that is what they become; nothing is armed for buying
+-- without being asked for explicitly.
+insert into alerts (subscriber_id, term, notify, autobuy)
+select s.id, btrim(t.term), true, false
+  from subscribers s,
+       lateral unnest(string_to_array(s.keyword, ',')) as t(term)
+ where s.keyword is not null
+   and btrim(t.term) <> ''
+on conflict do nothing;
+
 -- When a keyword alert last texted someone about a given product. Separate from
 -- `watches` because these products were never chosen — the alert found them —
 -- but the cooldown reasoning is identical: a product whose availability flaps
@@ -156,6 +189,7 @@ create table if not exists keyword_alerts (
   last_notified_at timestamptz not null default now(),
   primary key (subscriber_id, product_id)
 );
+
 
 -- Append-only log of interesting things, which is what the RSS feed renders.
 create table if not exists events (
@@ -171,6 +205,15 @@ create table if not exists events (
 
 create index if not exists events_created_idx on events (created_at desc);
 create index if not exists events_product_idx on events (product_id, created_at desc);
+-- What the buyer userscript has already been handed, so a restock is offered
+-- once rather than every time the script asks.
+create table if not exists dispatches (
+  subscriber_id bigint      not null references subscribers (id) on delete cascade,
+  event_id      bigint      not null references events (id) on delete cascade,
+  term          text,
+  created_at    timestamptz not null default now(),
+  primary key (subscriber_id, event_id)
+);
 
 -- Audit trail of every text we tried to send.
 create table if not exists deliveries (

@@ -75,7 +75,13 @@ function alternativesFor(term) {
   // The initialism, for multi-word terms whose words are real words. Single
   // letters are already initials, and a term like "a b" would produce "ab" —
   // two characters that appear inside half the catalogue.
-  if (words.length >= 2 && words.every((w) => w.length >= 2)) {
+  //
+  // Only when every word is alphabetic. A term like "OP-17" is already the
+  // specific thing being asked for, and taking its initials produced "o1",
+  // which matched unrelated products — the opposite of what naming an exact
+  // set code is for.
+  const alphabetic = words.every((w) => /^[a-z]+$/.test(w) && w.length >= 2);
+  if (words.length >= 2 && alphabetic) {
     const initials = words.map((w) => w[0]).join('');
     if (initials.length >= 2) alternatives.push(`${LEFT}${escapeRegExp(initials)}${RIGHT}`);
   }

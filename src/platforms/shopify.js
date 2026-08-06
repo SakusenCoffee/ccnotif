@@ -1,19 +1,36 @@
 import { config } from '../config.js';
 import { safeFetchJson } from '../safe-fetch.js';
+import { pace } from '../robots.js';
 import { detectPreorder, rankCollections, scoreCollection } from './signals.js';
 
 /**
  * Shopify: read the public JSON feeds every storefront publishes.
  *
  * These are a documented, deliberately public API rather than pages meant for a
- * browser, and reading a whole store costs a handful of requests, so — unlike
- * the HTML-scraping adapters — this one calls fetch directly rather than going
- * through the robots.txt-aware crawler.
+ * browser, so this adapter doesn't consult robots.txt the way the scraping ones
+ * do — but it shares their per-host request queue, because a poll still costs
+ * one request per watched section and firing those at once is what got a real
+ * store to start refusing all of them.
  */
 
 const PAGE_SIZE = 250;
 const COLLECTION_PAGE_SIZE = 250;
 const MAX_COLLECTION_PAGES = 8;
+
+/**
+ * Every request to a store goes through the same per-host queue the scraped
+ * adapters use.
+ *
+ * These are public JSON feeds, but a poll fetches one page per watched section,
+ * and firing them all at once is a burst however gentle the interval looks.
+ * Serialising them with a small gap is what keeps eleven sections from becoming
+ * eleven simultaneous requests — which is what got a real store to start
+ * refusing every one of them.
+ */
+function fetchPaced(url, options) {
+  const host = new URL(url).host;
+  return pace(host, config.poll.requestGapMs, () => safeFetchJson(url, options));
+}
 
 /**
  * A product is buyable when at least one of its variants is. Shopify reports
@@ -45,7 +62,7 @@ function primaryImage(product) {
 async function fetchAllCollections(origin, signal) {
   const collections = [];
   for (let page = 1; page <= MAX_COLLECTION_PAGES; page += 1) {
-    const body = await safeFetchJson(
+    const body = await fetchPaced(
       `${origin}/collections.json?limit=${COLLECTION_PAGE_SIZE}&page=${page}`,
       { signal },
     );
@@ -65,7 +82,7 @@ async function discover(origin, { signal } = {}) {
   // store name and currency.
   let meta = null;
   try {
-    const body = await safeFetchJson(`${origin}/meta.json`, { signal });
+    const body = await fetchPaced(`${origin}/meta.json`, { signal });
     if (body && typeof body === 'object' && (body.name || body.currency)) meta = body;
   } catch {
     // Some stores disable it; the collections probe below decides.
@@ -135,7 +152,7 @@ async function fetchProducts(site, { signal } = {}) {
         const url =
           `${site.origin}/collections/${encodeURIComponent(collection)}` +
           `/products.json?limit=${PAGE_SIZE}&page=${page}`;
-        const body = await safeFetchJson(url, { signal });
+        const body = await fetchPaced(url, { signal });
         const products = body.products ?? [];
         if (!products.length) break;
 

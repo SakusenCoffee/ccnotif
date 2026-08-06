@@ -46,6 +46,23 @@ Two channels, either or both:
 
 With neither configured, messages are written to the log instead of sent.
 
+## Alerts
+
+Standing alerts are added one term at a time under **RSS**. Each carries two
+independent switches:
+
+- **Notify** — send a push or text when a product title matches.
+- **Auto-buy** — hand the match to the buyer userscript, which opens the
+  product and drives checkout.
+
+They are separate because the useful combinations differ: a broad term like
+`pokemon` is worth being told about but not worth arming a buyer for, while an
+exact set code like `OP-17` is the reverse. Matching runs on the server, so
+there is one definition of what counts and it is the one you can edit.
+
+Matching is loose on words and exact on codes: `one piece` also finds OnePiece,
+One-Piece and OP; `OP-17` finds OP-17 and OP17 but never OP-18.
+
 ## Configuration
 
 See `.env.example`.

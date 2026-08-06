@@ -2,7 +2,7 @@ import { config } from './config.js';
 import { query, transaction } from './db.js';
 import { fetchSiteProducts } from './discover.js';
 import { enabledSites, getSite } from './sites.js';
-import { compileAlert } from './match.js';
+import { compiledAlertsBySubscriber, matchingAlerts } from './alerts.js';
 import { keywordMessage, restockMessage, sendSms } from './notify.js';
 import { formatPrice } from './money.js';
 import { restockPush, sendPush } from './push.js';
@@ -305,33 +305,41 @@ async function notifyRestocks(restockEvents) {
 async function notifyKeywordMatches(events) {
   if (!events.length) return 0;
 
-  const { rows: subscribers } = await query(
-    `select id, phone, verified, feed_token, keyword, ntfy_topic, ntfy_enabled
-       from subscribers
-      where unsubscribed_at is null
-        and keyword is not null
-        and keyword <> ''
-        and ((verified and phone is not null)
-             or (ntfy_enabled and ntfy_topic is not null))`,
-  );
-  if (!subscribers.length) return 0;
-
-  // One regex per person for the whole batch, rather than one per comparison.
-  const alerts = subscribers
-    .map((s) => ({ subscriber: s, alert: compileAlert(s.keyword) }))
-    .filter((a) => a.alert);
-  if (!alerts.length) return 0;
+  const everyone = await compiledAlertsBySubscriber();
+  if (!everyone.length) return 0;
 
   let sent = 0;
 
   for (const event of events) {
-    for (const { subscriber, alert } of alerts) {
-      if (!alert.test(event.title)) continue;
+    for (const { subscriber, alerts } of everyone) {
+      const matched = matchingAlerts(alerts, event.title);
+      if (!matched.length) continue;
 
-      // Someone already watching this product is about to get the restock text
-      // for it; a second message saying the same thing is not a better alert.
+      // The two switches are answered independently: a term may arm the buyer
+      // without ever texting, or the reverse, and a title matching several
+      // terms should do whatever any of them asked for.
+      const shouldNotify = matched.some((a) => a.notify);
+      const shouldDispatch = matched.some((a) => a.autobuy);
+      const term = matched[0].term;
+
+      if (shouldDispatch) {
+        // Recorded, not delivered. The buyer userscript asks for these when it
+        // is running; queueing them here means a restock that happened while
+        // the browser was shut is still waiting when it opens.
+        await query(
+          `insert into dispatches (subscriber_id, event_id, term)
+             values ($1,$2,$3)
+           on conflict do nothing`,
+          [subscriber.id, event.id, matched.find((a) => a.autobuy)?.term ?? term],
+        ).catch(() => {});
+      }
+
+      if (!shouldNotify) continue;
+
+      // Someone already watching this product is about to get the restock
+      // message for it; a second one saying the same thing is not a better alert.
       const { rows: already } = await query(
-        `select 1 from watches where subscriber_id = $1 and product_id = $2`,
+        `select 1 from watches where subscriber_id = $1 and product_id = $2 and notify`,
         [subscriber.id, event.product_id],
       );
       if (already.length) continue;
@@ -348,14 +356,13 @@ async function notifyKeywordMatches(events) {
         `select s.currency from products p join sites s on s.id = p.site_id where p.id = $1`,
         [event.product_id],
       );
-      const term = alert.match(event.title);
       const currency = site[0]?.currency ?? 'USD';
       const results = [];
 
       if (subscriber.ntfy_enabled && subscriber.ntfy_topic) {
         const push = await sendPush(subscriber.ntfy_topic, {
           ...restockPush(event, currency, formatPrice),
-          title: term ? `Matched "${term}"` : 'Matched your alert',
+          title: `Matched "${term}"`,
         });
         results.push({ channel: 'push', ...push });
       }

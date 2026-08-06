@@ -294,7 +294,6 @@ async function loadMe() {
   state.signedIn = Boolean(me.signedIn);
   state.phone = me.phone ?? null;
   state.feedToken = me.feedToken ?? null;
-  state.keyword = me.keyword ?? '';
   state.notify = me.notify ?? {};
   state.username = me.username ?? null;
   state.hasAccount = Boolean(me.hasAccount);
@@ -408,7 +407,6 @@ $('#check-code-btn').addEventListener('click', async () => {
     });
     state.signedIn = true;
     state.feedToken = data.feedToken;
-    state.keyword = data.keyword ?? '';
     state.notify = data.notify ?? {};
     // Keep whatever the visitor ticked before signing in, plus anything already
     // on the server-side watchlist.
@@ -444,7 +442,7 @@ function resetToSignedOut() {
   state.signedIn = false;
   state.phone = null;
   state.feedToken = null;
-  state.keyword = '';
+  state.alerts = [];
   state.watchedOnly = false;
   state.notify = {};
   state.username = null;
@@ -550,12 +548,12 @@ function syncFeedControls() {
   // Always typable. Reaching this page at all means being signed in, and the
   // alert is worth saving before a delivery channel is set up — gating the box
   // on having one made it look broken to anyone using push.
-  $('#keyword').value = state.keyword ?? '';
-  $('#keyword').disabled = false;
-  $('#keyword-save-btn').disabled = false;
+  // Loose on words, exact on codes: "one piece" also finds OnePiece and OP,
+  // while "OP-17" finds only OP-17 and OP17 — never OP-18.
   $('#keyword-hint').textContent = hasChannel()
-    ? 'Matching is loose: “one piece” also finds OnePiece, One-Piece and OP. Separate several with commas. Leave empty to switch off.'
-    : 'Saved, but nothing can reach you yet — turn on push notifications under Account.';
+    ? 'One term at a time. “one piece” also finds OnePiece and OP; “OP-17” matches only that set.'
+    : 'Add terms now, but nothing can reach you yet — turn on push notifications under Account.';
+  loadAlerts();
 }
 
 async function loadFeed() {
@@ -602,35 +600,126 @@ $('#feed-scope').addEventListener('click', (e) => {
 $('#feed-btn').addEventListener('click', () => showFeed(!showingFeed));
 $('#feed-back-btn').addEventListener('click', () => showFeed(false));
 
-// The standing alert. Saving reports back which terms will actually be matched
-// on, because "one piece" quietly becoming an "OP" match too is worth seeing.
-$('#keyword-save-btn').addEventListener('click', async () => {
-  const button = $('#keyword-save-btn');
-  const hint = $('#keyword-hint');
-  button.disabled = true;
-  button.textContent = 'Saving';
-  try {
-    const data = await api('/api/keyword', {
-      method: 'PUT',
-      body: { keyword: $('#keyword').value },
+// --- standing alerts --------------------------------------------------------
+//
+// One term at a time, each row carrying its own two switches. A single
+// comma-separated field could not express them: it had no way to say that
+// "pokemon" should only tell you while "OP-17" should also arm the buyer.
+
+function renderAlerts() {
+  const list = $('#alert-list');
+  list.replaceChildren();
+
+  if (!state.alerts.length) {
+    const li = document.createElement('li');
+    li.className = 'alert-empty';
+    li.textContent = 'No alerts yet. Add a title, a series, or an exact set code like OP-17.';
+    list.append(li);
+    return;
+  }
+
+  for (const alert of state.alerts) {
+    const li = document.createElement('li');
+    li.className = 'alert-row';
+
+    const term = document.createElement('span');
+    term.className = 'alert-term';
+    term.textContent = alert.term;
+
+    const switches = document.createElement('span');
+    switches.className = 'alert-switches';
+
+    const make = (field, label, title, extraClass = '') => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = `alert-switch ${extraClass} ${alert[field] ? 'on' : ''}`.trim();
+      button.textContent = label;
+      button.title = title;
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        $('#alert-error').hidden = true;
+        try {
+          const data = await api(`/api/alerts/${alert.id}`, {
+            method: 'PATCH',
+            body: { [field]: !alert[field] },
+          });
+          Object.assign(alert, data.alert);
+          renderAlerts();
+        } catch (err) {
+          showError('#alert-error', err.data?.message ?? err.message);
+          button.disabled = false;
+        }
+      });
+      return button;
+    };
+
+    switches.append(
+      make('notify', 'Notify', 'Send a notification when this matches'),
+      make('autobuy', 'Auto-buy', 'Hand the match to the buyer script, which opens the product', 'buy'),
+    );
+
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'alert-remove';
+    remove.textContent = '×';
+    remove.title = `Delete "${alert.term}"`;
+    remove.addEventListener('click', async () => {
+      remove.disabled = true;
+      try {
+        await api(`/api/alerts/${alert.id}`, { method: 'DELETE' });
+        state.alerts = state.alerts.filter((a) => a.id !== alert.id);
+        renderAlerts();
+      } catch (err) {
+        showError('#alert-error', err.data?.message ?? err.message);
+        remove.disabled = false;
+      }
     });
-    state.keyword = data.keyword ?? '';
-    $('#keyword').value = state.keyword;
-    hint.textContent = data.terms?.length
-      ? `Alerting on: ${data.terms.join(', ')} — plus close spellings and initials.`
-      : 'Keyword alerts are off. Type something to switch them back on.';
+
+    li.append(term, switches, remove);
+    list.append(li);
+  }
+}
+
+async function loadAlerts() {
+  try {
+    const data = await api('/api/alerts');
+    state.alerts = data.alerts ?? [];
+  } catch {
+    state.alerts = [];
+  }
+  renderAlerts();
+}
+
+async function addAlertTerm() {
+  const input = $('#keyword');
+  const button = $('#keyword-save-btn');
+  const term = input.value.trim();
+  if (!term) return;
+
+  button.disabled = true;
+  button.textContent = 'Adding';
+  $('#alert-error').hidden = true;
+  try {
+    const data = await api('/api/alerts', { method: 'POST', body: { term } });
+    state.alerts = [...state.alerts, data.alert].sort((a, b) =>
+      a.term.localeCompare(b.term),
+    );
+    input.value = '';
+    renderAlerts();
+    input.focus();
   } catch (err) {
-    hint.textContent = err.data?.message ?? err.message;
+    showError('#alert-error', err.data?.message ?? err.message);
   } finally {
     button.disabled = false;
-    button.textContent = 'Save';
+    button.textContent = 'Add';
   }
-});
+}
 
+$('#keyword-save-btn').addEventListener('click', addAlertTerm);
 $('#keyword').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
     e.preventDefault();
-    $('#keyword-save-btn').click();
+    addAlertTerm();
   }
 });
 
@@ -658,7 +747,6 @@ function adoptSession(data) {
   state.username = data.username ?? null;
   state.hasAccount = true;
   state.feedToken = data.feedToken ?? state.feedToken;
-  state.keyword = data.keyword ?? '';
   state.notify = data.notify ?? {};
   state.saved = new Set(data.watches ?? []);
   state.selected = new Set(state.saved);

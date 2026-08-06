@@ -149,7 +149,7 @@ export function delayFor(robots) {
 // would silently never apply.
 const queues = new Map(); // host -> { chain, lastFinishedAt }
 
-function pace(host, delayMs, fn) {
+export function pace(host, delayMs, fn) {
   let state = queues.get(host);
   if (!state) {
     state = { chain: Promise.resolve(), lastFinishedAt: 0 };
