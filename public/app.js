@@ -99,6 +99,7 @@ function applyView() {
   $('#status').hidden = noStores || feed;
   $('#empty').hidden = !noStores || feed;
   $('#feed-btn').classList.toggle('active', feed);
+  $('#watched-btn').classList.toggle('active', state.watchedOnly && !feed);
 }
 
 function renderGrid() {
@@ -109,9 +110,12 @@ function renderGrid() {
   renderHeader();
 
   const shown = state.products.length;
+  const scope = state.watchedOnly ? ' you watch' : '';
   $('#status').textContent = shown
-    ? `${shown} product${shown === 1 ? '' : 's'}${state.q ? ` matching “${state.q}”` : ''}`
-    : 'Nothing matches those filters.';
+    ? `${shown} product${shown === 1 ? '' : 's'}${scope}${state.q ? ` matching “${state.q}”` : ''}`
+    : state.watchedOnly
+      ? 'Nothing on your watchlist matches those filters.'
+      : 'Nothing matches those filters.';
 }
 
 function renderTray() {
@@ -188,6 +192,7 @@ async function loadProducts() {
   });
   if (state.q) params.set('q', state.q);
   if (state.siteId) params.set('siteId', state.siteId);
+  if (state.watchedOnly) params.set('watched', '1');
 
   $('#status').textContent = 'Loading…';
   try {
@@ -347,6 +352,7 @@ function resetToSignedOut() {
   state.phone = null;
   state.feedToken = null;
   state.keyword = '';
+  state.watchedOnly = false;
   state.saved = new Set();
   state.selected = new Set();
   renderAccount();
@@ -477,6 +483,16 @@ function showFeed(on) {
     loadFeed();
   }
 }
+
+// The watchlist as a view over the same grid, so the store dropdown, search
+// and sort keep working — a separate screen would have had to grow its own.
+$('#watched-btn').addEventListener('click', async () => {
+  if (!state.signedIn) return openDialog('phone');
+  state.watchedOnly = !state.watchedOnly;
+  if (showingFeed) showFeed(false);
+  applyView();
+  await loadProducts();
+});
 
 $('#feed-scope').addEventListener('click', (e) => {
   const scope = e.target.closest('button')?.dataset.scope;

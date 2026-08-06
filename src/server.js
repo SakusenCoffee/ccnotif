@@ -229,7 +229,26 @@ app.post('/api/sites/:id/poll', requireAdmin, async (req, res, next) => {
   try {
     const site = await getSite(Number(req.params.id));
     if (!site) return res.status(404).json({ error: 'not_found' });
-    res.json({ result: await pollSite(site) });
+
+    // Same reasoning as adding a store: a scraped catalogue takes minutes to
+    // read, and no browser holds a request open that long. Awaiting it here
+    // made "Refresh" look broken on exactly the stores it was most useful for
+    // — the request died, the dialog showed an error, and the poll it started
+    // went on to finish perfectly well in the background.
+    const polling = pollSite(site).catch((err) => {
+      console.error(`[http] manual poll of ${site.origin} failed: ${err.message}`);
+      return null;
+    });
+
+    const result = await Promise.race([
+      polling,
+      new Promise((resolve) => setTimeout(() => resolve(PENDING), SEED_WAIT_MS).unref?.()),
+    ]);
+
+    res.json({
+      result: result === PENDING ? null : result,
+      running: result === PENDING,
+    });
   } catch (err) {
     next(err);
   }
@@ -263,6 +282,20 @@ app.get('/api/products', async (req, res, next) => {
     if (siteId) {
       params.push(Number(siteId));
       where.push(`p.site_id = $${params.length}`);
+    }
+
+    // The watchlist as a filter rather than a separate screen, so the store
+    // dropdown, search and sort all keep working over it. Resolved from the
+    // session here rather than trusted from the query — a caller must not be
+    // able to read somebody else's list by guessing an id.
+    if (req.query.watched === '1') {
+      const subscriber = await subscriberBySession(req.cookies?.[config.sessionCookie]);
+      if (!subscriber) return res.json({ products: [], totals: null, signedIn: false });
+      params.push(subscriber.id);
+      where.push(
+        `exists (select 1 from watches w
+                  where w.product_id = p.id and w.subscriber_id = $${params.length})`,
+      );
     }
 
     const orderBy =

@@ -10,6 +10,7 @@ export const state = {
   phone: null,
   feedToken: null,
   keyword: '',
+  watchedOnly: false,
   status: 'unavailable',
   sort: 'title',
   siteId: '',
