@@ -441,6 +441,15 @@ app.post('/api/unsubscribe', requireSubscriber, async (req, res, next) => {
 
 // --- RSS --------------------------------------------------------------------
 
+// Feeds go out as text/xml, not application/rss+xml.
+//
+// Both are valid for RSS and every reader accepts either, but a browser only
+// applies an xml-stylesheet instruction to a document it treats as plain XML —
+// under application/rss+xml Chrome skips the stylesheet and prints the source.
+// Verified with the identical document served both ways: text/xml renders,
+// application/rss+xml does not. The <link rel="alternate"> autodiscovery tag
+// and atom:link still advertise application/rss+xml, which is what those are
+// for; this is only the response header.
 app.get('/feed.xml', async (req, res, next) => {
   try {
     const siteId = req.query.site ? Number(req.query.site) : null;
@@ -451,7 +460,7 @@ app.get('/feed.xml', async (req, res, next) => {
       limit: 100,
     });
 
-    res.type('application/rss+xml').send(
+    res.type('text/xml').send(
       renderRss({
         items,
         title: site ? `${site.name} restocks` : `${config.appName} restocks`,
@@ -477,7 +486,7 @@ app.get('/feed/:token.xml', async (req, res, next) => {
       limit: 100,
     });
 
-    res.type('application/rss+xml').send(
+    res.type('text/xml').send(
       renderRss({
         items,
         title: `My ${config.appName} watchlist`,

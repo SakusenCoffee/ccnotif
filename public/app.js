@@ -233,8 +233,6 @@ function openDialog(pane) {
   }
   if (pane === 'account') {
     $('#account-phone').textContent = state.phone ?? '';
-    $('#feed-url').value = `${location.origin}/feed/${state.feedToken}.xml`;
-    $('#keyword').value = state.keyword ?? '';
   }
   $('#phone-error').hidden = true;
   $('#code-error').hidden = true;
@@ -341,6 +339,106 @@ function resetToSignedOut() {
   renderTray();
   dialog.close();
 }
+
+// --- RSS view ---------------------------------------------------------------
+//
+// The "RSS" button used to navigate straight to /feed.xml, which meant clicking
+// it left the app and landed you on a document meant for software. This opens
+// the same information as a page: what has happened lately, the standing alert,
+// and the address to hand a feed reader.
+
+const feedDialog = () => $('#feed-dialog');
+
+const FEED_LABEL = {
+  restock: 'Now in stock',
+  new: 'New pre-order listed',
+  sold_out: 'Sold out',
+};
+
+function renderFeedItems(events) {
+  const list = $('#feed-list');
+  list.replaceChildren();
+
+  if (!events.length) {
+    const li = document.createElement('li');
+    li.className = 'feed-empty';
+    li.textContent =
+      'Nothing yet. When a pre-order flips to buyable it shows up here, and in the feed.';
+    list.append(li);
+    return;
+  }
+
+  for (const event of events) {
+    const li = document.createElement('li');
+    li.className = 'feed-item';
+
+    if (event.image_url) {
+      const img = document.createElement('img');
+      img.className = 'feed-thumb';
+      img.src = event.image_url;
+      img.alt = '';
+      img.loading = 'lazy';
+      li.append(img);
+    }
+
+    const body = document.createElement('div');
+
+    const badge = document.createElement('span');
+    badge.className = `badge ${event.type === 'restock' ? 'in' : 'pre'}`;
+    badge.textContent = FEED_LABEL[event.type] ?? event.type;
+
+    const title = document.createElement('a');
+    title.className = 'feed-title';
+    title.href = event.url;
+    title.target = '_blank';
+    title.rel = 'noopener';
+    title.textContent = event.title;
+
+    const meta = document.createElement('span');
+    meta.className = 'feed-meta';
+    const price = money(event.price, event.currency) ?? 'Price TBA';
+    const when = new Date(event.created_at).toLocaleString();
+    meta.textContent = `${price} · ${event.site_name} · ${when}`;
+
+    body.append(badge, title, meta);
+    li.append(body);
+    list.append(li);
+  }
+}
+
+async function openFeed() {
+  // Signed in, the personal feed is the useful one — it is only your watchlist.
+  const personal = state.signedIn && state.feedToken;
+  $('#feed-url').value = personal
+    ? `${location.origin}/feed/${state.feedToken}.xml`
+    : `${location.origin}/feed.xml`;
+  $('#feed-url-note').textContent = personal
+    ? 'Only the products on your watchlist. Treat it as private — anyone with the link can read it.'
+    : 'Every restock across every store. Sign in to get a feed of just your watchlist.';
+
+  $('#keyword').value = state.keyword ?? '';
+  $('#keyword').disabled = !state.signedIn;
+  $('#keyword-save-btn').disabled = !state.signedIn;
+  $('#keyword-hint').textContent = state.signedIn
+    ? 'Matching is loose: “one piece” also finds OnePiece, One-Piece and OP. Separate several with commas. Leave empty to switch off.'
+    : 'Sign in to be texted when something matching shows up.';
+
+  if (!feedDialog().open) feedDialog().showModal();
+
+  renderFeedItems([]);
+  try {
+    const data = await api('/api/events?type=all');
+    renderFeedItems(data.events ?? []);
+  } catch (err) {
+    $('#feed-list').replaceChildren();
+    const li = document.createElement('li');
+    li.className = 'feed-empty';
+    li.textContent = err.data?.message ?? err.message;
+    $('#feed-list').append(li);
+  }
+}
+
+$('#feed-btn').addEventListener('click', openFeed);
 
 // The standing alert. Saving reports back which terms will actually be matched
 // on, because "one piece" quietly becoming an "OP" match too is worth seeing.

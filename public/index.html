@@ -20,7 +20,7 @@
         </div>
         <div class="topbar-actions">
           <button class="ghost" id="stores-btn" type="button">Stores</button>
-          <a class="ghost" href="/feed.xml" title="Restock feed for every store">RSS</a>
+          <button class="ghost" id="feed-btn" type="button" title="Updates, alerts and feed addresses">RSS</button>
           <button class="ghost" id="account-btn" type="button">Sign in</button>
         </div>
       </div>
@@ -126,29 +126,9 @@
       <div class="pane" id="pane-account" hidden>
         <h2>You're all set</h2>
         <p class="muted">Alerts go to <strong id="account-phone"></strong>.</p>
-        <label for="feed-url">Your personal RSS feed</label>
-        <div class="copy-row">
-          <input id="feed-url" type="text" readonly />
-          <button class="ghost" id="copy-btn" type="button">Copy</button>
-        </div>
         <p class="muted small">
-          Point any reader at this URL to see only the products on your watchlist.
-        </p>
-
-        <label for="keyword">Text me about anything matching</label>
-        <div class="copy-row">
-          <input
-            id="keyword"
-            type="text"
-            placeholder="one piece, pokemon"
-            autocomplete="off"
-            spellcheck="false"
-          />
-          <button class="ghost" id="keyword-save-btn" type="button">Save</button>
-        </div>
-        <p class="muted small" id="keyword-hint">
-          Matching is loose: <em>one piece</em> also finds “OnePiece”, “One-Piece” and “OP”.
-          Separate several with commas. Leave empty to switch off.
+          Your personal feed address and keyword alerts live under
+          <strong>RSS</strong>, at the top of the page.
         </p>
 
         <div class="account-buttons">
@@ -199,6 +179,40 @@
         <p class="error" id="choose-error" hidden></p>
         <button class="primary wide" id="save-store-btn" type="button">Add store</button>
         <button class="linkish" id="choose-back-btn" type="button">Use a different URL</button>
+      </div>
+    </dialog>
+
+    <dialog id="feed-dialog">
+      <form method="dialog" class="dialog-close"><button aria-label="Close">&times;</button></form>
+
+      <div class="pane" id="pane-feed">
+        <h2>Updates</h2>
+        <p class="muted">Everything that has flipped to buyable or been newly listed.</p>
+
+        <label for="keyword">Text me about anything matching</label>
+        <div class="copy-row">
+          <input
+            id="keyword"
+            type="text"
+            placeholder="one piece, pokemon"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button class="ghost" id="keyword-save-btn" type="button">Save</button>
+        </div>
+        <p class="muted small" id="keyword-hint">
+          Matching is loose: <em>one piece</em> also finds “OnePiece”, “One-Piece” and “OP”.
+          Separate several with commas. Leave empty to switch off.
+        </p>
+
+        <ul class="feed-list" id="feed-list"></ul>
+
+        <label for="feed-url">Feed address for a reader</label>
+        <div class="copy-row">
+          <input id="feed-url" type="text" readonly />
+          <button class="ghost" id="copy-btn" type="button">Copy</button>
+        </div>
+        <p class="muted small" id="feed-url-note"></p>
       </div>
     </dialog>
 

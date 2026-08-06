@@ -289,14 +289,24 @@ The personal token is shown in the account dialog after you verify, and is linke
 from every alert text. It's a bearer token — anyone with the URL sees that
 watchlist (but can't change it or see the phone number).
 
-**Opened in a browser, a feed renders as a readable page.** Handed raw RSS, a
-browser shows a wall of angle brackets or offers to download it, and the
-reasonable conclusion is that the link is broken. `public/feed.xsl` is an XSLT
-stylesheet the browser applies to the very same document: product images, prices,
-store names and badges, plus a short explanation of what the URL is for, since
-someone who clicked "RSS" may not know. Feed readers ignore the stylesheet and
-parse the XML underneath, so one URL serves both without content negotiation or a
-second endpoint to keep in step.
+**The RSS button opens a page in the app, not a feed file.** It used to link
+straight to `/feed.xml`, which meant clicking it left the app and dropped you on a
+document written for software. The dialog shows recent updates, the keyword alert
+field, and the address to hand a feed reader.
+
+**Opened directly, a feed still renders as a readable page.** `public/feed.xsl` is
+an XSLT stylesheet the browser applies to the very same document: images, prices,
+stores and badges, plus a note saying what the URL is for. Readers ignore the
+stylesheet and parse the XML underneath, so one URL serves both.
+
+Feeds are sent as `text/xml`, **not** `application/rss+xml`. Both are valid RSS and
+readers accept either, but a browser only applies an `xml-stylesheet` instruction
+to a document it treats as plain XML — under `application/rss+xml` Chrome skips the
+stylesheet and prints the source, which is exactly what "the RSS link shows XML"
+looks like. Confirmed by serving the identical document both ways: `text/xml`
+renders, `application/rss+xml` does not. The `<link rel="alternate">` autodiscovery
+tag and `atom:link` still advertise `application/rss+xml`, which is what those are
+for; this is only the response header.
 
 Items also carry `media:thumbnail` and a few `pw:*` fields (product, store,
 price, label). The stylesheet builds the page from those rather than picking
@@ -305,8 +315,8 @@ gets a real image out of it too.
 
 ## Keyword alerts
 
-The watchlist requires having already found a product. The text field in the
-account dialog is the standing version: **text me about anything matching this**,
+The watchlist requires having already found a product. The text field under
+**RSS** is the standing version: **text me about anything matching this**,
 whether or not I have ever seen it. It fires on both kinds of event, because a
 newly listed pre-order is usually what you wanted to hear about, and earlier than
 its restock would tell you.
