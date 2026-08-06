@@ -398,7 +398,9 @@ function renderFeedItems(events) {
     const body = document.createElement('div');
 
     const badge = document.createElement('span');
-    badge.className = `badge ${event.type === 'restock' ? 'in' : 'pre'}`;
+    badge.className = `badge ${
+      { restock: 'in', new: 'pre', sold_out: 'out' }[event.type] ?? 'pre'
+    }`;
     badge.textContent = FEED_LABEL[event.type] ?? event.type;
 
     const title = document.createElement('a');
@@ -420,14 +422,28 @@ function renderFeedItems(events) {
   }
 }
 
+// Which feed address the box is offering. "Everything" is the default because
+// it is what the address is usually wanted for — the watchlist feed is the
+// narrower, opt-in case, and offering it first made the whole feed look scoped
+// to a handful of ticked products when it never was.
+let feedScope = 'all';
+
 function syncFeedControls() {
-  const personal = state.signedIn && state.feedToken;
-  $('#feed-url').value = personal
+  const canScope = state.signedIn && state.feedToken;
+  if (!canScope) feedScope = 'all';
+
+  const mine = feedScope === 'mine';
+  $('#feed-url').value = mine
     ? `${location.origin}/feed/${state.feedToken}.xml`
-    : `${location.origin}/feed.xml`;
-  $('#feed-url-note').textContent = personal
+    : `${location.origin}/feed.xml?type=all`;
+  $('#feed-url-note').textContent = mine
     ? 'Only the products on your watchlist. Treat it as private — anyone with the link can read it.'
-    : 'Every update across every store. Sign in to get a feed of just your watchlist.';
+    : 'Every restock, new listing and sell-out across every watched store.';
+
+  for (const button of $('#feed-scope').querySelectorAll('button')) {
+    button.classList.toggle('active', (button.dataset.scope === 'mine') === mine);
+    button.disabled = button.dataset.scope === 'mine' && !canScope;
+  }
 
   $('#keyword').value = state.keyword ?? '';
   $('#keyword').disabled = !state.signedIn;
@@ -461,6 +477,13 @@ function showFeed(on) {
     loadFeed();
   }
 }
+
+$('#feed-scope').addEventListener('click', (e) => {
+  const scope = e.target.closest('button')?.dataset.scope;
+  if (!scope) return;
+  feedScope = scope;
+  syncFeedControls();
+});
 
 $('#feed-btn').addEventListener('click', () => showFeed(!showingFeed));
 $('#feed-back-btn').addEventListener('click', () => showFeed(false));

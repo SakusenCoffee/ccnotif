@@ -66,6 +66,10 @@
 
         <details class="feed-address">
           <summary>Read this in a feed reader instead</summary>
+          <div class="segmented" role="group" aria-label="Feed scope" id="feed-scope">
+            <button type="button" data-scope="all" class="active">Everything</button>
+            <button type="button" data-scope="mine">Just my watchlist</button>
+          </div>
           <div class="copy-row">
             <input id="feed-url" type="text" readonly />
             <button class="ghost" id="copy-btn" type="button">Copy</button>

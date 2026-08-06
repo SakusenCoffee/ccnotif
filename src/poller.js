@@ -152,6 +152,7 @@ async function syncSite(site) {
 
     const restocked = [];
     const appeared = [];
+    const soldOut = [];
 
     if (!seeding) {
       for (const p of products) {
@@ -161,6 +162,10 @@ async function syncSite(site) {
 
         if (before === undefined) appeared.push({ ...p, productId });
         else if (p.available && before === false) restocked.push({ ...p, productId });
+        // The other direction is a change too. It sends nobody a text — being
+        // told you missed something is not an alert, it is a taunt — but it
+        // belongs in the feed, which is a record of what the stores did.
+        else if (!p.available && before === true) soldOut.push({ ...p, productId });
       }
     }
 
@@ -168,6 +173,7 @@ async function syncSite(site) {
     for (const [type, batch] of [
       ['restock', restocked],
       ['new', appeared],
+      ['sold_out', soldOut],
     ]) {
       for (const p of batch) {
         const { rows } = await client.query(
@@ -192,6 +198,7 @@ async function syncSite(site) {
       seeded: seeding,
       restockEvents: events.filter((e) => e.type === 'restock'),
       newEvents: events.filter((e) => e.type === 'new'),
+      soldOutEvents: events.filter((e) => e.type === 'sold_out'),
       errors,
     };
   });
@@ -355,6 +362,7 @@ export async function pollSite(site) {
       result.seeded ||
       result.restockEvents.length ||
       result.newEvents.length ||
+      result.soldOutEvents.length ||
       sent ||
       keywordSent;
     if (notable) {
@@ -363,6 +371,7 @@ export async function pollSite(site) {
           (result.seeded
             ? ' (initial seed, no alerts sent)'
             : ` · ${result.restockEvents.length} restock, ${result.newEvents.length} new, ` +
+              `${result.soldOutEvents.length} sold out, ` +
               `${sent} watch texts, ${keywordSent} keyword texts`),
       );
     }

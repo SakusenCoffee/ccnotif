@@ -351,3 +351,5 @@ dialog input { width: 100%; }
   border: 1px dashed var(--pw-line); border-radius: 10px;
 }
 .feed-empty strong { color: var(--pw-text); font-size: 14px; }
+
+.feed-address .segmented { margin-bottom: 10px; }
