@@ -10,7 +10,7 @@ export function normalizeOrigin(input) {
 }
 
 /**
- * Where the store actually lives. Typing "miniaturemarket.com" reaches a host
+ * Where the store actually lives. Typing a bare domain can reach a host
  * that redirects to www, and if we kept the address as typed we'd be judging
  * every link on the page against an origin the store never uses — its own
  * navigation would look off-site. Follow the homepage once and adopt whatever

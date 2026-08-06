@@ -46,9 +46,8 @@ export const PREORDER_MARKER = /pre[\s_-]?order|coming[\s_-]?soon/i;
 /**
  * Whether a product is something you pre-order rather than something on a shelf.
  *
- * Across Hobbiesville's three watched collections the title-and-tag test catches
- * 316 of 317 products, with 2 false positives in a 250-item non-pre-order
- * control.
+ * Measured across three watched collections, the title-and-tag test caught 316
+ * of 317 products, with 2 false positives in a 250-item non-pre-order control.
  */
 export function detectPreorder({ title, tags = [] }) {
   if (PREORDER_MARKER.test(title ?? '')) return true;

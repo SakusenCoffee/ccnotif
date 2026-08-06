@@ -10,7 +10,7 @@ import { safeFetch } from './safe-fetch.js';
  * about it matter, so every scraped fetch goes through here: it obeys Disallow
  * and spaces requests out by Crawl-delay.
  *
- * Miniature Market, for instance, publishes `Crawl-delay: 10`, disallows
+ * A store may, for instance, publish `Crawl-delay: 10` while disallowing
  * `?limit=` (which is why listings are paged rather than fetched in bulk) and
  * explicitly allows `?p=`, the pagination the adapter uses.
  */

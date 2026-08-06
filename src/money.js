@@ -1,5 +1,5 @@
 /**
- * Stores are not all in USD — Hobbiesville prices in CAD — so every price is
+ * Stores are not all in USD — some price in CAD — so every price is
  * rendered against its own site's currency. A price of 0 or null means the
  * store hasn't announced one yet, which is "TBA" rather than "free".
  */

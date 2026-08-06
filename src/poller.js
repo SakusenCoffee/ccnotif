@@ -416,8 +416,8 @@ export async function runPoll() {
     // Sites run concurrently, not one after another. A store read from a JSON
     // feed finishes in under a second; a scraped one takes minutes. Queued
     // behind each other, adding one slow store would drop every fast store to
-    // that store's pace — Hobbiesville would go from a poll a second to a poll
-    // every twelve minutes because Miniature Market is in the same sweep.
+    // that store's pace — a fast store would go from a poll a second to a poll
+    // every twelve minutes because a slow one is in the same sweep.
     //
     // Concurrency is bounded so a long list of stores can't exhaust the
     // database pool; per-host request pacing is enforced separately, inside the

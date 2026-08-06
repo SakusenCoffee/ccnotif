@@ -169,7 +169,7 @@ app.post(
       // counts straight away rather than an empty store until the next tick.
       //
       // But a scraped store is read one listing page at a time, spaced by the
-      // crawl delay it asks for: seeding Miniature Market's pre-order sections
+      // crawl delay it asks for: seeding a large store's pre-order sections
       // takes minutes, and no HTTP request survives that — the browser and the
       // platform's edge both give up long before it lands, and the store looks
       // like it failed to add when it is in fact being read perfectly well.

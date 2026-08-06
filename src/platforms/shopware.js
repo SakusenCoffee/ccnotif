@@ -123,7 +123,7 @@ function storeCurrency(html) {
  * Returns the navigation separately from `extra`: links that aren't marked as
  * navigation but whose own last path segment reads as a pre-order section. A
  * store's headline pre-order listing is often a promo button rather than a menu
- * item — Miniature Market's site-wide `/preorders` is an `<a class="btn">` — and
+ * item — a site-wide `/preorders` is often an `<a class="btn">` — and
  * that link is worth offering. Testing only the last segment is what keeps
  * product URLs out: `/Some-Set-Preorder/SKU123` ends in its SKU, not in
  * "preorder", so it doesn't qualify.
