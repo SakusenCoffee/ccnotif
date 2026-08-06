@@ -96,10 +96,17 @@ async function withSubscriber(req, res, next) {
 }
 
 async function requireSubscriber(req, res, next) {
-  const subscriber = await subscriberBySession(req.cookies?.[config.sessionCookie]);
-  if (!subscriber) return res.status(401).json({ error: 'not_signed_in' });
-  req.subscriber = subscriber;
-  next();
+  try {
+    // The gate has usually resolved this already; reuse it rather than issuing
+    // a second identical query for the same request.
+    const subscriber =
+      req.account ?? (await subscriberBySession(req.cookies?.[config.sessionCookie]));
+    if (!subscriber) return res.status(401).json({ error: 'not_signed_in' });
+    req.subscriber = subscriber;
+    next();
+  } catch (err) {
+    next(err);
+  }
 }
 
 // Store management is gated only when ADMIN_TOKEN is set, so the app is usable
@@ -135,10 +142,47 @@ const PUBLIC_PATHS = new Set([
 
 const PUBLIC_PATTERNS = [/^\/feed\/[A-Za-z0-9_-]+\.xml$/];
 
+// Loading one page asks for the document, the stylesheet and three scripts —
+// five requests, effectively at once, each of which the gate must authorise. A
+// database round trip apiece is both wasteful and fragile: it multiplies every
+// page view by five queries, and a database that hiccups under that burst takes
+// out a script rather than an API call, which surfaces as a page stuck on
+// "Loading…" rather than an error anyone can read.
+//
+// So an authorised session is remembered for a few seconds. Long enough to
+// collapse a page load into a single lookup, short enough that signing out or
+// having a session revoked elsewhere takes effect almost immediately. The cache
+// is dropped entirely on any write that invalidates a session, so the delay
+// only ever applies to things nobody has touched.
+const SESSION_CACHE_MS = 5_000;
+const sessionCache = new Map(); // token -> { at, account }
+
+function forgetSession(token) {
+  if (token) sessionCache.delete(token);
+  else sessionCache.clear();
+}
+
+setInterval(() => {
+  const cutoff = Date.now() - SESSION_CACHE_MS;
+  for (const [token, entry] of sessionCache) {
+    if (entry.at < cutoff) sessionCache.delete(token);
+  }
+}, 30_000).unref();
+
 /** A session belonging to a real account — not merely a session. */
 async function accountFromRequest(req) {
-  const subscriber = await subscriberBySession(req.cookies?.[config.sessionCookie]);
-  return subscriber?.password_hash ? subscriber : null;
+  const token = req.cookies?.[config.sessionCookie];
+  if (!token) return null;
+
+  const cached = sessionCache.get(token);
+  if (cached && Date.now() - cached.at < SESSION_CACHE_MS) return cached.account;
+
+  const subscriber = await subscriberBySession(token);
+  const account = subscriber?.password_hash ? subscriber : null;
+  // Negative results are cached too: an expired cookie on a page that keeps
+  // retrying should not become a query per retry.
+  sessionCache.set(token, { at: Date.now(), account });
+  return account;
 }
 
 app.use(async (req, res, next) => {
@@ -462,8 +506,21 @@ app.get('/api/events', async (req, res, next) => {
 
 // --- verification + session -------------------------------------------------
 
+// Both verification routes refuse outright when SMS is off, rather than
+// reaching Twilio and surfacing whatever it says about a setup nobody is using.
+function requireSms(_req, res, next) {
+  if (!config.smsEnabled) {
+    return res.status(404).json({
+      error: 'sms_disabled',
+      message: 'Texting is off. Alerts are delivered by push notification.',
+    });
+  }
+  next();
+}
+
 app.post(
   '/api/verify/start',
+  requireSms,
   rateLimit({ windowMs: 15 * 60_000, max: 10, key: 'verify-start' }),
   async (req, res, next) => {
     try {
@@ -498,6 +555,7 @@ app.post(
 
 app.post(
   '/api/verify/check',
+  requireSms,
   rateLimit({ windowMs: 15 * 60_000, max: 20, key: 'verify-check' }),
   async (req, res, next) => {
     try {
@@ -515,6 +573,7 @@ app.post(
         await absorbAnonymous(existing.id, result.subscriber.id);
       }
 
+      forgetSession(req.cookies?.[config.sessionCookie]);
       setSessionCookie(res, result.session);
       const watches = await getWatchedProductIds(result.subscriber.id);
       res.json({
@@ -542,6 +601,9 @@ app.get('/api/me', async (req, res, next) => {
       phone: subscriber.phone,
       username: subscriber.username ?? null,
       hasAccount: Boolean(subscriber.password_hash),
+      // What this deployment offers, so the UI never presents a channel that
+      // cannot work here.
+      smsEnabled: config.smsEnabled,
       push: {
         enabled: Boolean(subscriber.ntfy_enabled && subscriber.ntfy_topic),
         topic: subscriber.ntfy_topic ?? null,
@@ -599,6 +661,7 @@ app.post(
         await absorbAnonymous(anonymous.id, result.subscriber.id);
       }
 
+      forgetSession(req.cookies?.[config.sessionCookie]);
       setSessionCookie(res, result.session);
       res.json({
         ok: true,
@@ -642,7 +705,11 @@ app.put(
         });
       }
 
-      // The old session was just invalidated; keep *this* browser signed in.
+      // Changing a password is how you lock out someone who has yours, so every
+      // cached session is dropped, not just this browser's — otherwise theirs
+      // would keep working for the lifetime of the cache entry. Clearing the
+      // whole map is cheap and cannot miss one.
+      forgetSession();
       setSessionCookie(res, result.session);
       res.json({ ok: true });
     } catch (err) {
@@ -747,8 +814,10 @@ app.put('/api/watches/:productId/notify', withSubscriber, async (req, res, next)
     const canPush = req.subscriber.ntfy_enabled && req.subscriber.ntfy_topic;
     if (notify && !canText && !canPush) {
       return res.status(403).json({
-        error: 'verification_required',
-        message: 'Turn on push notifications or add a phone number first.',
+        error: 'no_channel',
+        message: config.smsEnabled
+          ? 'Turn on push notifications or add a phone number first.'
+          : 'Turn on push notifications first — Account, then Push notifications.',
       });
     }
 
@@ -761,6 +830,7 @@ app.put('/api/watches/:productId/notify', withSubscriber, async (req, res, next)
 });
 
 app.post('/api/signout', (req, res) => {
+  forgetSession(req.cookies?.[config.sessionCookie]);
   res.clearCookie(config.sessionCookie);
   res.json({ ok: true });
 });
@@ -768,6 +838,7 @@ app.post('/api/signout', (req, res) => {
 app.post('/api/unsubscribe', requireSubscriber, async (req, res, next) => {
   try {
     await unsubscribe(req.subscriber.id);
+    forgetSession(req.cookies?.[config.sessionCookie]);
     res.clearCookie(config.sessionCookie);
     res.json({ ok: true });
   } catch (err) {
@@ -919,7 +990,26 @@ app.get('/feed.xsl', (_req, res) => {
   res.type('text/xsl').sendFile(fileURLToPath(new URL('../public/feed.xsl', import.meta.url)));
 });
 
-app.use(express.static(fileURLToPath(new URL('../public', import.meta.url)), { maxAge: '5m' }));
+// No max-age on the app's own files.
+//
+// They were cached for five minutes, which means every deploy is followed by
+// five minutes of browsers running the previous version against the new server
+// — an upgrade that appears not to have happened, or worse, half happened.
+// These are a few tens of kilobytes; the ETag express.static already sends
+// makes an unchanged file a 304 with no body, which is cheap enough that
+// buying five minutes of staleness for it is a bad trade.
+app.use(
+  express.static(fileURLToPath(new URL('../public', import.meta.url)), {
+    etag: true,
+    lastModified: true,
+    setHeaders(res, filePath) {
+      // Images and the stylesheet for the feed change rarely and are not
+      // versioned against the API, so they can be held briefly.
+      const cacheable = /\.(png|jpe?g|gif|svg|webp|ico)$/i.test(filePath);
+      res.setHeader('cache-control', cacheable ? 'public, max-age=3600' : 'no-cache');
+    },
+  }),
+);
 
 app.use((err, _req, res, _next) => {
   console.error('[http]', err);

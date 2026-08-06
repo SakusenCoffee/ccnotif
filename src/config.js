@@ -85,6 +85,12 @@ export const config = {
     maxPages: int(process.env.CRAWL_MAX_PAGES, 40),
   },
 
+  // SMS is opt-in. Push (below) costs nothing, needs no account and no phone
+  // number, so texting is the fallback rather than the default — and a stale or
+  // half-finished Twilio setup should not surface as errors in a UI nobody
+  // asked to use. Set SMS_ENABLED=true only if you actually want texts.
+  smsEnabled: bool(process.env.SMS_ENABLED, false),
+
   twilio: {
     accountSid: str('TWILIO_ACCOUNT_SID'),
     authToken: str('TWILIO_AUTH_TOKEN'),
@@ -95,7 +101,10 @@ export const config = {
     // With no credentials the app still runs end-to-end; texts are logged to
     // stdout instead of sent. Handy while building the UI.
     get enabled() {
-      return Boolean(this.accountSid && this.authToken && (this.from || this.messagingServiceSid));
+      return (
+        config.smsEnabled &&
+        Boolean(this.accountSid && this.authToken && (this.from || this.messagingServiceSid))
+      );
     },
   },
 
@@ -161,9 +170,16 @@ export function assertConfig() {
       '[config] DATABASE_URL is not set. The app will start but cannot store anything yet.',
     );
   }
-  if (!config.twilio.enabled) {
+  if (config.smsEnabled && !config.twilio.enabled) {
     console.warn(
-      '[config] Twilio is not configured — outgoing texts will be logged to stdout instead of sent.',
+      '[config] SMS_ENABLED is set but Twilio is not fully configured — texts will be ' +
+        'logged to stdout instead of sent.',
+    );
+  }
+  if (!config.smsEnabled) {
+    console.log(
+      '[config] SMS is off. Alerts are delivered by push notification ' +
+        `(${config.ntfy.server}); set SMS_ENABLED=true to offer texting as well.`,
     );
   }
   if (!config.adminToken) {

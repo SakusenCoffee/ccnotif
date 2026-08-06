@@ -15,6 +15,7 @@ export const state = {
   username: null,
   hasAccount: false,
   push: { enabled: false, topic: null, url: null },
+  smsEnabled: false,
   status: 'all',
   sort: 'title',
   siteId: '',

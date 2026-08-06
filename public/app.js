@@ -85,11 +85,15 @@ function card(product) {
   if (state.watchedOnly) {
     const bell = document.createElement('button');
     bell.type = 'button';
-    bell.className = 'notify-toggle' + (state.notify[product.id] ? ' on' : '');
-    bell.textContent = state.notify[product.id] ? 'Texting on' : 'Text me';
-    bell.title = state.notify[product.id]
-      ? 'You get a text when this changes'
-      : 'Get a text when this changes';
+    // Named after what actually happens on this deployment: with SMS off these
+    // are push notifications, and calling them texts is simply untrue.
+    const on = state.notify[product.id];
+    const noun = state.smsEnabled ? 'text' : 'alert';
+    bell.className = 'notify-toggle' + (on ? ' on' : '');
+    bell.textContent = on ? `${noun === 'text' ? 'Texting' : 'Alerting'} on` : `${noun === 'text' ? 'Text' : 'Alert'} me`;
+    bell.title = on
+      ? `You get a${noun === 'alert' ? 'n' : ''} ${noun} when this changes`
+      : `Get a${noun === 'alert' ? 'n' : ''} ${noun} when this changes`;
 
     bell.addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -106,7 +110,7 @@ function card(product) {
       } catch (err) {
         // The one place a phone number is genuinely needed. Ask for it here
         // rather than up front, so watching never demanded one.
-        if (err.data?.error === 'verification_required') openDialog('phone');
+        if (err.data?.error === 'no_channel') openDialog('account');
         else showError('#store-error', err.message);
         bell.disabled = false;
       }
@@ -253,6 +257,7 @@ async function loadMe() {
   state.username = me.username ?? null;
   state.hasAccount = Boolean(me.hasAccount);
   state.push = me.push ?? { enabled: false, topic: null, url: null };
+  state.smsEnabled = Boolean(me.smsEnabled);
   if (me.watches) {
     state.saved = new Set(me.watches);
     state.selected = new Set(me.watches);
@@ -278,7 +283,7 @@ async function saveWatches() {
     setTimeout(() => (btn.textContent = 'Save & get texts'), 1600);
   } catch (err) {
     btn.textContent = 'Save & get texts';
-    if (err.status === 401) return openDialog('phone');
+    if (err.status === 401) return openDialog('account');
     alert(`Could not save: ${err.message}`);
   }
 }
@@ -293,12 +298,9 @@ function openDialog(pane) {
   }
   if (pane === 'account') {
     renderPush();
-    const bits = [];
-    if (state.username) bits.push(`Signed in as ${state.username}`);
-    if (state.phone) bits.push(`alerts go to ${state.phone}`);
-    $('#account-identity').textContent = bits.length
-      ? `${bits.join(' · ')}.`
-      : 'Watching in this browser only.';
+    // Nothing here should offer texting when the deployment cannot send one.
+    $('#to-phone-btn').hidden = !state.smsEnabled;
+    $('#add-phone-row').hidden = !state.smsEnabled;
     $('#change-pass-btn').hidden = !state.hasAccount;
   }
   for (const id of ['#phone-error', '#code-error', '#login-error', '#pass-error']) {
@@ -503,12 +505,15 @@ function syncFeedControls() {
     button.disabled = button.dataset.scope === 'mine' && !canScope;
   }
 
+  // Always typable. Reaching this page at all means being signed in, and the
+  // alert is worth saving before a delivery channel is set up — gating the box
+  // on having one made it look broken to anyone using push.
   $('#keyword').value = state.keyword ?? '';
-  $('#keyword').disabled = !state.signedIn;
-  $('#keyword-save-btn').disabled = !state.signedIn;
-  $('#keyword-hint').textContent = state.signedIn
+  $('#keyword').disabled = false;
+  $('#keyword-save-btn').disabled = false;
+  $('#keyword-hint').textContent = hasChannel()
     ? 'Matching is loose: “one piece” also finds OnePiece, One-Piece and OP. Separate several with commas. Leave empty to switch off.'
-    : 'Sign in to be texted when something matching this shows up.';
+    : 'Saved, but nothing can reach you yet — turn on push notifications under Account.';
 }
 
 async function loadFeed() {
@@ -618,11 +623,29 @@ function adoptSession(data) {
 }
 
 $('#to-phone-btn').addEventListener('click', () => openDialog('phone'));
+$('#add-phone-btn').addEventListener('click', () => openDialog('phone'));
 $('#pass-back-btn').addEventListener('click', () => openDialog('account'));
 $('#change-pass-btn').addEventListener('click', () => openDialog('password'));
 
+/** Whether anything can actually reach this person right now. */
+function hasChannel() {
+  return Boolean(state.push?.enabled || (state.smsEnabled && state.signedIn));
+}
+
+/** The one-line summary of who you are and where alerts go. */
+function renderIdentity() {
+  const bits = [];
+  if (state.username) bits.push(`Signed in as ${state.username}`);
+  if (state.phone && state.smsEnabled) bits.push(`texts go to ${state.phone}`);
+  if (state.push?.enabled) bits.push('alerts go to your ntfy app');
+  $('#account-identity').textContent = bits.length
+    ? `${bits.join(' · ')}.`
+    : 'No alert channel yet — turn on push notifications below.';
+}
+
 /** Reflect the current push state into the account pane. */
 function renderPush() {
+  renderIdentity();
   const { enabled, topic, url } = state.push ?? {};
   $('#push-state').textContent = enabled
     ? 'On. Alerts arrive in the ntfy app.'
@@ -817,7 +840,15 @@ async function boot() {
 $('#setup-retry').addEventListener('click', () => location.reload());
 
 initStores();
-await boot();
+
+// A failure here used to leave the page reading "Loading…" forever, which is
+// indistinguishable from a server that never answered. Whatever goes wrong,
+// say so on the page rather than only in a console nobody has open.
+await boot().catch((err) => {
+  console.error('[boot]', err);
+  $('#status').hidden = false;
+  $('#status').textContent = `Could not start: ${err.message}`;
+});
 
 // A ?t=<feedToken> link (the one included in every alert text) opens the
 // account pane directly.

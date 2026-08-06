@@ -39,7 +39,10 @@ Two channels, either or both:
   cost, no phone number. Turn it on under Account and subscribe to the topic
   shown in the ntfy app. Topics are generated rather than chosen, because on a
   public server anyone who knows a topic name can read it.
-- **SMS** — needs Twilio credentials and costs per message.
+- **SMS** — off unless `SMS_ENABLED=true`, and then it needs Twilio credentials
+  and costs per message. While it is off the phone fields are hidden and the
+  verification endpoints refuse outright, so a half-finished Twilio setup cannot
+  surface as errors in a UI nobody asked to use.
 
 With neither configured, messages are written to the log instead of sent.
 

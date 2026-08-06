@@ -52,7 +52,7 @@
           <button class="linkish inline" id="feed-back-btn" type="button">Back to pre-orders</button>
         </div>
 
-        <label for="keyword">Text me about anything matching</label>
+        <label for="keyword">Alert me about anything matching</label>
         <div class="copy-row">
           <input
             id="keyword"
@@ -150,7 +150,7 @@
         <input id="login-pass" type="password" autocomplete="current-password" />
         <p class="error" id="login-error" hidden></p>
         <button class="primary wide" id="login-btn" type="button">Sign in</button>
-        <button class="linkish" id="to-phone-btn" type="button">Use a phone number instead</button>
+        <button class="linkish" id="to-phone-btn" type="button" hidden>Use a phone number instead</button>
       </div>
 
       <div class="pane" id="pane-password" hidden>
@@ -218,6 +218,10 @@
             </p>
           </div>
           <p class="error" id="push-error" hidden></p>
+        </div>
+
+        <div class="account-buttons" id="add-phone-row" hidden>
+          <button class="ghost wide" id="add-phone-btn" type="button">Add a phone number for texts</button>
         </div>
 
         <div class="account-buttons">
