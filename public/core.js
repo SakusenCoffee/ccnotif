@@ -11,6 +11,7 @@ export const state = {
   feedToken: null,
   keyword: '',
   watchedOnly: false,
+  notify: {},
   status: 'unavailable',
   sort: 'title',
   siteId: '',

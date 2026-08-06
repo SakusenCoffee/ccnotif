@@ -13,11 +13,15 @@ import { adapterFor } from './platforms/index.js';
 import { pollerState, pollSite, runPoll, startPoller } from './poller.js';
 import { addSite, deleteSite, getSite, listSites, updateSite } from './sites.js';
 import {
+  absorbAnonymous,
   checkVerification,
   clearVerificationCooldown,
+  createAnonymousSubscriber,
+  getWatchNotifyMap,
   getWatchedProductIds,
   normalizePhone,
   setKeyword,
+  setWatchNotify,
   setWatches,
   startVerification,
   subscriberByFeedToken,
@@ -64,6 +68,25 @@ setInterval(() => {
 // short enough to be nowhere near any proxy's idle timeout.
 const SEED_WAIT_MS = 12_000;
 const PENDING = Symbol('seeding');
+
+/**
+ * Get the session's subscriber, creating an anonymous one if there isn't a
+ * session yet. Used by anything a visitor may do before deciding whether they
+ * want texts — which is now everything except the texting itself.
+ */
+async function withSubscriber(req, res, next) {
+  try {
+    let subscriber = await subscriberBySession(req.cookies?.[config.sessionCookie]);
+    if (!subscriber) {
+      subscriber = await createAnonymousSubscriber();
+      setSessionCookie(res, subscriber.session_token);
+    }
+    req.subscriber = subscriber;
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
 
 async function requireSubscriber(req, res, next) {
   const subscriber = await subscriberBySession(req.cookies?.[config.sessionCookie]);
@@ -407,8 +430,16 @@ app.post(
       const phone = normalizePhone(req.body?.phone);
       if (!phone) return res.status(400).json({ error: 'invalid_phone' });
 
+      // Whoever is here already — possibly an anonymous watcher with a list
+      // built before they decided they wanted texts.
+      const existing = await subscriberBySession(req.cookies?.[config.sessionCookie]);
+
       const result = await checkVerification(phone, req.body?.code ?? '');
       if (result.error) return res.status(400).json(result);
+
+      if (existing && !existing.phone) {
+        await absorbAnonymous(existing.id, result.subscriber.id);
+      }
 
       setSessionCookie(res, result.session);
       const watches = await getWatchedProductIds(result.subscriber.id);
@@ -418,6 +449,7 @@ app.post(
         watches,
         feedToken: result.subscriber.feed_token,
         keyword: result.subscriber.keyword ?? '',
+        notify: await getWatchNotifyMap(result.subscriber.id),
       });
     } catch (err) {
       next(err);
@@ -428,20 +460,23 @@ app.post(
 app.get('/api/me', async (req, res, next) => {
   try {
     const subscriber = await subscriberBySession(req.cookies?.[config.sessionCookie]);
-    if (!subscriber) return res.json({ signedIn: false });
+    if (!subscriber) return res.json({ signedIn: false, watches: [], notify: {} });
     res.json({
-      signedIn: true,
+      // "Signed in" now means a verified phone, which is what actually gates
+      // anything. A session without one still carries a watchlist.
+      signedIn: Boolean(subscriber.verified && subscriber.phone),
       phone: subscriber.phone,
       feedToken: subscriber.feed_token,
       keyword: subscriber.keyword ?? '',
       watches: await getWatchedProductIds(subscriber.id),
+      notify: await getWatchNotifyMap(subscriber.id),
     });
   } catch (err) {
     next(err);
   }
 });
 
-app.put('/api/watches', requireSubscriber, async (req, res, next) => {
+app.put('/api/watches', withSubscriber, async (req, res, next) => {
   try {
     const ids = Array.isArray(req.body?.productIds) ? req.body.productIds : [];
     const saved = await setWatches(req.subscriber.id, ids);
@@ -460,6 +495,31 @@ app.put('/api/keyword', requireSubscriber, async (req, res, next) => {
   try {
     const saved = await setKeyword(req.subscriber.id, req.body?.keyword ?? '');
     res.json({ ok: true, ...saved });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Texting for one watched product. Turning it *on* is the only place a phone
+ * number is actually required — which is the point of splitting the two.
+ */
+app.put('/api/watches/:productId/notify', withSubscriber, async (req, res, next) => {
+  try {
+    const notify = Boolean(req.body?.notify);
+    const productId = Number(req.params.productId);
+    if (!Number.isFinite(productId)) return res.status(400).json({ error: 'bad_product' });
+
+    if (notify && !(req.subscriber.verified && req.subscriber.phone)) {
+      return res.status(403).json({
+        error: 'verification_required',
+        message: 'Add a phone number to be texted about this.',
+      });
+    }
+
+    const ok = await setWatchNotify(req.subscriber.id, productId, notify);
+    if (!ok) return res.status(404).json({ error: 'not_watched' });
+    res.json({ ok: true, productId, notify });
   } catch (err) {
     next(err);
   }

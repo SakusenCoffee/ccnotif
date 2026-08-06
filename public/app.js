@@ -79,6 +79,42 @@ function card(product) {
   link.addEventListener('click', (e) => e.stopPropagation());
   label.querySelector('.card-meta').append(link);
 
+  // In the Watched view each card carries its own texting switch, because that
+  // is the decision this view exists to let you make. It is per product: you
+  // can follow a dozen things and be woken by one.
+  if (state.watchedOnly) {
+    const bell = document.createElement('button');
+    bell.type = 'button';
+    bell.className = 'notify-toggle' + (state.notify[product.id] ? ' on' : '');
+    bell.textContent = state.notify[product.id] ? 'Texting on' : 'Text me';
+    bell.title = state.notify[product.id]
+      ? 'You get a text when this changes'
+      : 'Get a text when this changes';
+
+    bell.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      const next = !state.notify[product.id];
+      bell.disabled = true;
+      try {
+        await api(`/api/watches/${product.id}/notify`, {
+          method: 'PUT',
+          body: { notify: next },
+        });
+        state.notify[product.id] = next;
+        renderGrid();
+      } catch (err) {
+        // The one place a phone number is genuinely needed. Ask for it here
+        // rather than up front, so watching never demanded one.
+        if (err.data?.error === 'verification_required') openDialog('phone');
+        else showError('#store-error', err.message);
+        bell.disabled = false;
+      }
+    });
+
+    label.querySelector('.card-body').append(bell);
+  }
+
   li.append(label);
   return li;
 }
@@ -126,7 +162,7 @@ function renderTray() {
 
   tray.hidden = state.selected.size === 0 && !changed;
   $('#tray-count').textContent = `${state.selected.size} selected${
-    changed ? ' · unsaved' : ' · saved'
+    changed ? ' · unsaved' : ' · watching'
   }`;
   $('#save-btn').disabled = !changed;
 }
@@ -213,6 +249,7 @@ async function loadMe() {
   state.phone = me.phone ?? null;
   state.feedToken = me.feedToken ?? null;
   state.keyword = me.keyword ?? '';
+  state.notify = me.notify ?? {};
   if (me.watches) {
     state.saved = new Set(me.watches);
     state.selected = new Set(me.watches);
@@ -317,6 +354,7 @@ $('#check-code-btn').addEventListener('click', async () => {
     state.signedIn = true;
     state.feedToken = data.feedToken;
     state.keyword = data.keyword ?? '';
+    state.notify = data.notify ?? {};
     // Keep whatever the visitor ticked before signing in, plus anything already
     // on the server-side watchlist.
     const before = state.selected.size;
@@ -353,6 +391,7 @@ function resetToSignedOut() {
   state.feedToken = null;
   state.keyword = '';
   state.watchedOnly = false;
+  state.notify = {};
   state.saved = new Set();
   state.selected = new Set();
   renderAccount();
@@ -487,7 +526,6 @@ function showFeed(on) {
 // The watchlist as a view over the same grid, so the store dropdown, search
 // and sort keep working — a separate screen would have had to grow its own.
 $('#watched-btn').addEventListener('click', async () => {
-  if (!state.signedIn) return openDialog('phone');
   state.watchedOnly = !state.watchedOnly;
   if (showingFeed) showFeed(false);
   applyView();
@@ -551,10 +589,10 @@ $('#account-btn').addEventListener('click', () => openDialog(state.signedIn ? 'a
 
 // --- controls ---------------------------------------------------------------
 
-$('#save-btn').addEventListener('click', () => {
-  if (!state.signedIn) return openDialog('phone');
-  saveWatches();
-});
+// Watching is open to anyone: the server issues a session on demand, so there
+// is nothing to sign into. A phone is only needed to be texted, and that is
+// asked for on the toggle that actually needs it.
+$('#save-btn').addEventListener('click', () => saveWatches());
 
 $('#clear-btn').addEventListener('click', () => {
   state.selected = new Set();

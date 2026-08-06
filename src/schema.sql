@@ -98,6 +98,13 @@ create table if not exists subscribers (
 -- fuzzily (see src/match.js).
 alter table subscribers add column if not exists keyword text;
 
+-- Watching no longer requires a phone number. A visitor who ticks something
+-- gets a row here with no phone at all, identified only by their session, and
+-- attaches a number later if and when they want texts. The unique index still
+-- holds: Postgres does not treat NULLs as equal, so any number of anonymous
+-- rows coexist while a real number stays unique.
+alter table subscribers alter column phone drop not null;
+
 -- The watchlist: which subscriber wants a text about which product.
 create table if not exists watches (
   subscriber_id    bigint      not null references subscribers (id) on delete cascade,
@@ -108,6 +115,16 @@ create table if not exists watches (
 );
 
 create index if not exists watches_product_idx on watches (product_id);
+
+-- Whether this particular watch should text. Watching and being texted are now
+-- separate decisions: you can follow a dozen things and be woken by one.
+--
+-- Defaulting to true is deliberate for the back-fill only. Every row that
+-- existed before this column was created under the old contract, where ticking
+-- a product *was* asking for texts, and silently switching those people off
+-- would have been the wrong way round. New rows are inserted with it off, so
+-- the default never applies to them.
+alter table watches add column if not exists notify boolean not null default true;
 
 -- When a keyword alert last texted someone about a given product. Separate from
 -- `watches` because these products were never chosen — the alert found them —

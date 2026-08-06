@@ -40,6 +40,33 @@ export async function findOrCreateSubscriber(phone) {
 }
 
 /**
+ * Give an anonymous watcher a phone number without losing what they watch.
+ *
+ * Someone ticks a dozen products, then decides they want texts. The list they
+ * built belongs to their anonymous row; the number may already belong to
+ * another. Dropping either would silently discard work they can see on screen,
+ * so the two are merged: watches move across, keeping whichever notify setting
+ * was already deliberate, and the empty row is removed.
+ */
+export async function absorbAnonymous(anonymousId, targetId) {
+  if (!anonymousId || anonymousId === targetId) return;
+
+  await query(
+    `insert into watches (subscriber_id, product_id, notify, created_at)
+       select $2, w.product_id, w.notify, w.created_at
+         from watches w
+        where w.subscriber_id = $1
+     on conflict (subscriber_id, product_id) do update
+       set notify = watches.notify or excluded.notify`,
+    [anonymousId, targetId],
+  );
+
+  // Only ever removes a row that never had a phone, so this cannot delete a
+  // real account even if it is handed the wrong id.
+  await query('delete from subscribers where id = $1 and phone is null', [anonymousId]);
+}
+
+/**
  * Issue a fresh verification code. Returns { code } when one was generated, or
  * { retryAfter } when the caller is still inside the resend cooldown.
  */
@@ -109,13 +136,29 @@ export async function checkVerification(phone, code) {
   return { subscriber: updated[0], session };
 }
 
+/**
+ * Resolve a session, verified or not. Watching is open to anyone, so a session
+ * has to mean "this browser" rather than "this confirmed phone number" — the
+ * checks that actually matter (can we text this person?) are made where the
+ * texting happens, not here.
+ */
 export async function subscriberBySession(sessionToken) {
   if (!sessionToken) return null;
-  const { rows } = await query(
-    'select * from subscribers where session_token = $1 and verified',
-    [sessionToken],
-  );
+  const { rows } = await query('select * from subscribers where session_token = $1', [
+    sessionToken,
+  ]);
   return rows[0] ?? null;
+}
+
+/** A watcher with no phone yet. Identified only by the session cookie. */
+export async function createAnonymousSubscriber() {
+  const { rows } = await query(
+    `insert into subscribers (phone, feed_token, session_token)
+       values (null, $1, $2)
+     returning *`,
+    [token(), token(32)],
+  );
+  return rows[0];
 }
 
 export async function subscriberByFeedToken(feedToken) {
@@ -150,15 +193,36 @@ export async function setWatches(subscriberId, productIds) {
   ]);
 
   if (ids.length) {
+    // notify defaults off: watching something and wanting to be woken by it are
+    // now separate choices, and the second one has to be asked for. `do
+    // nothing` on conflict is what preserves a toggle already set.
     await query(
-      `insert into watches (subscriber_id, product_id)
-         select $1, unnest($2::bigint[])
+      `insert into watches (subscriber_id, product_id, notify)
+         select $1, unnest($2::bigint[]), false
        on conflict do nothing`,
       [subscriberId, ids],
     );
   }
 
   return ids;
+}
+
+/** Which of a subscriber's watches are set to text them. */
+export async function getWatchNotifyMap(subscriberId) {
+  const { rows } = await query(
+    'select product_id, notify from watches where subscriber_id = $1',
+    [subscriberId],
+  );
+  return Object.fromEntries(rows.map((r) => [r.product_id, r.notify]));
+}
+
+/** Turn texting on or off for one watched product. */
+export async function setWatchNotify(subscriberId, productId, notify) {
+  const { rowCount } = await query(
+    'update watches set notify = $3 where subscriber_id = $1 and product_id = $2',
+    [subscriberId, productId, Boolean(notify)],
+  );
+  return rowCount > 0;
 }
 
 /**

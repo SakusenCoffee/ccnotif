@@ -219,7 +219,12 @@ async function notifyRestocks(restockEvents) {
          join products p on p.id = w.product_id
          join sites si on si.id = p.site_id
         where w.product_id = $1
+          -- Watching is open to anyone; being texted is not. A watch only
+          -- reaches a phone if it was switched on for this product *and* there
+          -- is a verified number to send it to.
+          and w.notify
           and s.verified
+          and s.phone is not null
           and s.unsubscribed_at is null
           and (w.last_notified_at is null
                or w.last_notified_at < now() - ($2 || ' hours')::interval)`,
@@ -266,6 +271,7 @@ async function notifyKeywordMatches(events) {
     `select id, phone, feed_token, keyword
        from subscribers
       where verified
+        and phone is not null
         and unsubscribed_at is null
         and keyword is not null
         and keyword <> ''`,

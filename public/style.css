@@ -354,3 +354,18 @@ dialog input { width: 100%; }
 .feed-empty strong { color: var(--pw-text); font-size: 14px; }
 
 .feed-address .segmented { margin-bottom: 10px; }
+
+/* Per-product texting switch, shown only in the Watched view. */
+.notify-toggle {
+  align-self: flex-start;
+  margin-top: 8px;
+  padding: 3px 9px;
+  font-size: 11.5px;
+  font-weight: 600;
+  border-radius: 20px;
+  border: 1px solid var(--pw-line);
+  background: transparent;
+  color: var(--pw-muted);
+}
+.notify-toggle.on { color: var(--pw-good); border-color: var(--pw-good); }
+.notify-toggle:disabled { opacity: .5; }
