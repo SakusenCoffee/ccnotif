@@ -1,5 +1,23 @@
 import 'dotenv/config';
 
+/**
+ * Read an environment variable, trimming whitespace and stripping a wrapping
+ * pair of quotes. Pasting `"abc"` or a value with a trailing newline into a
+ * dashboard's variable field is easy to do and otherwise fails much later as an
+ * opaque authentication error.
+ */
+function str(name) {
+  const raw = process.env[name];
+  if (raw === undefined) return undefined;
+  const trimmed = raw.trim();
+  const unquoted =
+    (trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length > 1) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'") && trimmed.length > 1)
+      ? trimmed.slice(1, -1).trim()
+      : trimmed;
+  return unquoted === '' ? undefined : unquoted;
+}
+
 function bool(v, dflt = false) {
   if (v === undefined || v === '') return dflt;
   return /^(1|true|yes|on)$/i.test(String(v));
@@ -12,7 +30,7 @@ function int(v, dflt) {
 
 export const config = {
   port: int(process.env.PORT, 3000),
-  databaseUrl: process.env.DATABASE_URL,
+  databaseUrl: str('DATABASE_URL'),
 
   // Public origin of this app, used to build links in texts and the RSS feed.
   // Railway injects RAILWAY_PUBLIC_DOMAIN automatically.
@@ -47,10 +65,12 @@ export const config = {
   },
 
   twilio: {
-    accountSid: process.env.TWILIO_ACCOUNT_SID,
-    authToken: process.env.TWILIO_AUTH_TOKEN,
-    from: process.env.TWILIO_FROM_NUMBER,
-    messagingServiceSid: process.env.TWILIO_MESSAGING_SERVICE_SID,
+    accountSid: str('TWILIO_ACCOUNT_SID'),
+    authToken: str('TWILIO_AUTH_TOKEN'),
+    // Strip spaces, dashes and brackets so "(913) 388-3175" style input still
+    // yields a usable E.164 number.
+    from: str('TWILIO_FROM_NUMBER')?.replace(/[\s()\-.]/g, ''),
+    messagingServiceSid: str('TWILIO_MESSAGING_SERVICE_SID'),
     // With no credentials the app still runs end-to-end; texts are logged to
     // stdout instead of sent. Handy while building the UI.
     get enabled() {
@@ -66,9 +86,9 @@ export const config = {
 
   // When set, adding/editing/removing stores requires this token. Leave unset
   // while the app is private; set it before sharing the URL.
-  adminToken: process.env.ADMIN_TOKEN || null,
+  adminToken: str('ADMIN_TOKEN') ?? null,
 
-  defaultCountry: process.env.DEFAULT_PHONE_COUNTRY || 'US',
+  defaultCountry: str('DEFAULT_PHONE_COUNTRY') || 'US',
   maxWatchesPerSubscriber: int(process.env.MAX_WATCHES, 100),
   maxSites: int(process.env.MAX_SITES, 25),
   sessionCookie: 'pw_session',

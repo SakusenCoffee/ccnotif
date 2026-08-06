@@ -130,6 +130,23 @@ For inbound STOP handling, point your Twilio number's "A message comes in" webho
 at `https://<your-domain>/twilio/inbound`. The endpoint verifies Twilio's request
 signature and rejects anything unsigned.
 
+#### Diagnosing a failed text
+
+Open `/twilio/diagnose` on your deployment. It asks Twilio directly and reports
+what is wrong, without returning any secret:
+
+```
+https://<your-domain>/twilio/diagnose
+```
+
+It checks the shape of each variable (a wrapping pair of quotes or a stray
+newline pasted into a dashboard field is the usual culprit), whether the
+credentials are accepted, whether `TWILIO_FROM_NUMBER` is a number this account
+owns and can send SMS from — **listing the numbers you do own if it isn't** —
+and, on a trial account, exactly which destination numbers are verified.
+
+If `ADMIN_TOKEN` is set, pass it as `?admin_token=…`.
+
 #### Trial accounts
 
 A Twilio trial account can **only text numbers you have verified**, including your

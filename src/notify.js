@@ -4,8 +4,24 @@ import { query } from './db.js';
 import { formatPrice } from './money.js';
 
 let client = null;
+let clientError = null;
 if (config.twilio.enabled) {
-  client = twilio(config.twilio.accountSid, config.twilio.authToken);
+  try {
+    client = twilio(config.twilio.accountSid, config.twilio.authToken);
+  } catch (err) {
+    // The SDK throws on a malformed Account SID. That must not take the whole
+    // process down at import — a mistyped variable would become an unbootable
+    // deploy with a stack trace instead of a fixable error message.
+    clientError = err.message;
+    console.error(
+      `[sms] Twilio client could not be created: ${err.message}. ` +
+        'Check TWILIO_ACCOUNT_SID. Texts are disabled until this is fixed.',
+    );
+  }
+}
+
+export function twilioClientError() {
+  return clientError;
 }
 
 /**
@@ -13,6 +29,9 @@ if (config.twilio.enabled) {
  * single bad number must not abort a batch of notifications.
  */
 export async function sendSms(to, body) {
+  if (clientError) {
+    return { ok: false, sid: null, error: `Twilio is misconfigured: ${clientError}`, code: null };
+  }
   if (!client) {
     console.log(`[sms:dry-run] -> ${to}\n${body}\n`);
     return { ok: true, sid: null, dryRun: true };

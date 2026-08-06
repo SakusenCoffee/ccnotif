@@ -7,6 +7,7 @@ import { dbState, initDb, query } from './db.js';
 import { discoverSite } from './discover.js';
 import { getFeedItems, parseTypes, renderRss } from './feed.js';
 import { describeSmsFailure, sendSms, verificationMessage } from './notify.js';
+import { diagnoseTwilio } from './twilio-diagnose.js';
 import { pollerState, pollSite, runPoll, startPoller } from './poller.js';
 import { addSite, deleteSite, getSite, listSites, updateSite } from './sites.js';
 import {
@@ -459,6 +460,15 @@ app.post(
 );
 
 // --- ops --------------------------------------------------------------------
+
+// Ask Twilio what is misconfigured. Reports findings, never secrets.
+app.get('/twilio/diagnose', requireAdmin, async (_req, res) => {
+  try {
+    res.json(await diagnoseTwilio());
+  } catch (err) {
+    res.status(500).json({ error: 'diagnose_failed', message: err.message });
+  }
+});
 
 // Liveness. Always 200 while the process is serving — a 503 here makes Railway
 // mark the whole deploy failed, which is wrong when the only problem is an
