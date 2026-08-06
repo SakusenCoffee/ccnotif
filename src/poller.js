@@ -24,7 +24,9 @@ const BACKOFF_MAX_MS = 15 * 60_000;
 const backoff = new Map(); // siteId -> { until, failures }
 
 // Every one of these means "you are asking too often" or "I am overloaded".
-const RATE_LIMITED = /responded (429|430|502|503|504)\b/;
+// Matched anywhere in the message, because a failure is usually reported
+// wrapped in context about which section it came from.
+const RATE_LIMITED = /\bresponded (429|430|500|502|503|504)\b|too many requests/i;
 
 function noteFailure(site, message) {
   if (!RATE_LIMITED.test(message)) return;
@@ -70,9 +72,17 @@ async function syncSite(site) {
   const products = [...new Map(fetched.map((p) => [p.externalId, p])).values()];
 
   if (!products.length) {
-    throw new Error(
-      `no products returned (${errors.map((e) => e.collection).join(', ') || 'unknown cause'})`,
-    );
+    // Carry the underlying failures, not just which sections failed.
+    //
+    // This used to report only the collection names, which threw away the HTTP
+    // status — and the backoff decides whether to rest a store by looking for
+    // one. So a store answering 429 to every request looked like an ordinary
+    // empty result, no backoff was applied, and it went on being polled at full
+    // speed indefinitely: exactly the runaway the backoff exists to prevent.
+    const detail = errors.length
+      ? errors.map((e) => `${e.collection}: ${e.message}`).join('; ')
+      : 'unknown cause';
+    throw new Error(`no products returned (${detail})`);
   }
 
   return transaction(async (client) => {

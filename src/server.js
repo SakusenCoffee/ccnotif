@@ -958,17 +958,33 @@ app.get('/twilio/diagnose', requireAdmin, async (_req, res) => {
 // mark the whole deploy failed, which is wrong when the only problem is an
 // unset variable the deploy itself can't fix. The database state is reported in
 // the body, and /readyz is the strict check.
-app.get('/healthz', (_req, res) => {
-  res.json({
+app.get('/healthz', async (req, res) => {
+  // Public by necessity — a gated health check fails deploys — so it says only
+  // whether the process is serving and whether the database is reachable.
+  //
+  // It used to return the whole poller state: every store's name, origin, the
+  // handles of each watched section, and the text of any error. That is a
+  // description of what this instance watches, published to anyone who asks,
+  // on a site whose whole point is that nothing is readable without signing in.
+  const summary = {
     ok: true,
+    database: { configured: Boolean(config.databaseUrl), ready: dbState.ready },
+  };
+
+  // The detail is still here for whoever is entitled to it.
+  const account = await accountFromRequest(req).catch(() => null);
+  if (!account) return res.json(summary);
+
+  res.json({
+    ...summary,
     database: {
-      configured: Boolean(config.databaseUrl),
-      ready: dbState.ready,
+      ...summary.database,
       error: dbState.error,
       attempts: dbState.attempts,
     },
     poller: pollerState,
-    twilio: config.twilio.enabled ? 'configured' : 'dry-run',
+    sms: config.smsEnabled ? (config.twilio.enabled ? 'configured' : 'misconfigured') : 'off',
+    push: config.ntfy.server,
     adminLocked: Boolean(config.adminToken),
   });
 });
