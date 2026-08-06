@@ -1,4 +1,7 @@
 import { $, api, convertedMoney, money, state } from './core.js';
+
+// Which of the two views the page is showing: the pre-order grid, or Updates.
+let showingFeed = false;
 import { initStores, openStores, reloadSites } from './stores.js';
 
 // --- rendering --------------------------------------------------------------
@@ -80,17 +83,29 @@ function card(product) {
   return li;
 }
 
+/**
+ * Which of the two views is on screen. Both the grid render and the Updates
+ * toggle route through here, so neither can quietly undo the other's hiding.
+ */
+function applyView() {
+  // With no stores there is nothing to browse, filter, or explain.
+  const noStores = state.sites.length === 0;
+  const feed = showingFeed;
+
+  $('#feed-view').hidden = !feed;
+  $('#grid').hidden = feed;
+  $('.intro').hidden = noStores || feed;
+  $('.controls').hidden = noStores || feed;
+  $('#status').hidden = noStores || feed;
+  $('#empty').hidden = !noStores || feed;
+  $('#feed-btn').classList.toggle('active', feed);
+}
+
 function renderGrid() {
   const grid = $('#grid');
   grid.replaceChildren(...state.products.map(card));
 
-  // With no stores there is nothing to browse, filter, or explain.
-  const noStores = state.sites.length === 0;
-  $('#empty').hidden = !noStores;
-  $('#status').hidden = noStores;
-  $('.controls').hidden = noStores;
-  $('.intro').hidden = noStores;
-
+  applyView();
   renderHeader();
 
   const shown = state.products.length;
@@ -340,14 +355,10 @@ function resetToSignedOut() {
   dialog.close();
 }
 
-// --- RSS view ---------------------------------------------------------------
+// --- Updates view -----------------------------------------------------------
 //
-// The "RSS" button used to navigate straight to /feed.xml, which meant clicking
-// it left the app and landed you on a document meant for software. This opens
-// the same information as a page: what has happened lately, the standing alert,
-// and the address to hand a feed reader.
-
-const feedDialog = () => $('#feed-dialog');
+// Shown in the page, not a modal. The alert box sits above the results because
+// it is the thing you came here to set; the list below is what it will match on.
 
 const FEED_LABEL = {
   restock: 'Now in stock',
@@ -362,8 +373,11 @@ function renderFeedItems(events) {
   if (!events.length) {
     const li = document.createElement('li');
     li.className = 'feed-empty';
-    li.textContent =
-      'Nothing yet. When a pre-order flips to buyable it shows up here, and in the feed.';
+    li.innerHTML =
+      '<strong>Nothing has changed yet.</strong>' +
+      '<span>Updates appear here the moment a pre-order flips to buyable, or a new ' +
+      'one is listed. The first read of a store is deliberately silent — otherwise ' +
+      'adding a shop would post its whole catalogue at once.</span>';
     list.append(li);
     return;
   }
@@ -397,8 +411,8 @@ function renderFeedItems(events) {
     const meta = document.createElement('span');
     meta.className = 'feed-meta';
     const price = money(event.price, event.currency) ?? 'Price TBA';
-    const when = new Date(event.created_at).toLocaleString();
-    meta.textContent = `${price} · ${event.site_name} · ${when}`;
+    meta.textContent =
+      `${price} · ${event.site_name} · ${new Date(event.created_at).toLocaleString()}`;
 
     body.append(badge, title, meta);
     li.append(body);
@@ -406,39 +420,50 @@ function renderFeedItems(events) {
   }
 }
 
-async function openFeed() {
-  // Signed in, the personal feed is the useful one — it is only your watchlist.
+function syncFeedControls() {
   const personal = state.signedIn && state.feedToken;
   $('#feed-url').value = personal
     ? `${location.origin}/feed/${state.feedToken}.xml`
     : `${location.origin}/feed.xml`;
   $('#feed-url-note').textContent = personal
     ? 'Only the products on your watchlist. Treat it as private — anyone with the link can read it.'
-    : 'Every restock across every store. Sign in to get a feed of just your watchlist.';
+    : 'Every update across every store. Sign in to get a feed of just your watchlist.';
 
   $('#keyword').value = state.keyword ?? '';
   $('#keyword').disabled = !state.signedIn;
   $('#keyword-save-btn').disabled = !state.signedIn;
   $('#keyword-hint').textContent = state.signedIn
     ? 'Matching is loose: “one piece” also finds OnePiece, One-Piece and OP. Separate several with commas. Leave empty to switch off.'
-    : 'Sign in to be texted when something matching shows up.';
+    : 'Sign in to be texted when something matching this shows up.';
+}
 
-  if (!feedDialog().open) feedDialog().showModal();
-
-  renderFeedItems([]);
+async function loadFeed() {
+  $('#feed-status').textContent = 'Loading updates…';
   try {
     const data = await api('/api/events?type=all');
-    renderFeedItems(data.events ?? []);
+    const events = data.events ?? [];
+    $('#feed-status').textContent = events.length
+      ? `${events.length} update${events.length === 1 ? '' : 's'}`
+      : '';
+    renderFeedItems(events);
   } catch (err) {
+    $('#feed-status').textContent = err.data?.message ?? err.message;
     $('#feed-list').replaceChildren();
-    const li = document.createElement('li');
-    li.className = 'feed-empty';
-    li.textContent = err.data?.message ?? err.message;
-    $('#feed-list').append(li);
   }
 }
 
-$('#feed-btn').addEventListener('click', openFeed);
+/** Swap between the pre-order grid and the updates list. */
+function showFeed(on) {
+  showingFeed = on;
+  applyView();
+  if (on) {
+    syncFeedControls();
+    loadFeed();
+  }
+}
+
+$('#feed-btn').addEventListener('click', () => showFeed(!showingFeed));
+$('#feed-back-btn').addEventListener('click', () => showFeed(false));
 
 // The standing alert. Saving reports back which terms will actually be matched
 // on, because "one piece" quietly becoming an "OP" match too is worth seeing.

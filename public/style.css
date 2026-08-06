@@ -307,17 +307,25 @@ dialog input { width: 100%; }
 /* Indicative conversion shown under the price the store actually charges. */
 .price-alt { font-size: 11.5px; color: var(--pw-muted); font-weight: 500; }
 
-/* --- RSS view -------------------------------------------------------------
-   The updates list inside the RSS dialog. Wider than the other dialogs,
-   because these rows carry a thumbnail, a title and a line of metadata. */
-#feed-dialog { width: min(560px, calc(100vw - 32px)); }
+/* --- Updates view ---------------------------------------------------------
+   A view within the page rather than a modal: the alert box sits above the
+   results, which is the order you read them in. */
+.feed-view { margin: 4px 0 30px; }
+.feed-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.feed-head h2 { margin: 0; font-size: 19px; }
+.feed-view label { display: block; font-size: 12.5px; color: var(--pw-muted); margin: 16px 0 6px; }
+.feed-view input { width: 100%; }
+.feed-address { margin-top: 18px; }
+.feed-address summary {
+  cursor: pointer; font-size: 12.5px; color: var(--pw-muted);
+  margin-bottom: 8px; user-select: none;
+}
+#feed-btn.active { color: var(--pw-accent); border-color: var(--pw-accent); }
 
 .feed-list {
   list-style: none;
-  margin: 18px 0 0;
+  margin: 6px 0 0;
   padding: 0;
-  max-height: 46vh;
-  overflow-y: auto;
 }
 .feed-item {
   display: flex;
@@ -337,7 +345,9 @@ dialog input { width: 100%; }
 .feed-title:hover { color: var(--pw-accent); text-decoration: underline; }
 .feed-meta { color: var(--pw-muted); font-size: 12px; }
 .feed-empty {
-  color: var(--pw-muted); font-size: 13px;
-  padding: 22px 12px; text-align: center;
+  display: flex; flex-direction: column; gap: 8px;
+  color: var(--pw-muted); font-size: 13px; line-height: 1.5;
+  padding: 26px 20px; text-align: center;
   border: 1px dashed var(--pw-line); border-radius: 10px;
 }
+.feed-empty strong { color: var(--pw-text); font-size: 14px; }

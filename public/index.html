@@ -45,6 +45,38 @@
         </p>
       </section>
 
+      <section class="feed-view" id="feed-view" hidden>
+        <div class="feed-head">
+          <h2>Updates</h2>
+          <button class="linkish inline" id="feed-back-btn" type="button">Back to pre-orders</button>
+        </div>
+
+        <label for="keyword">Text me about anything matching</label>
+        <div class="copy-row">
+          <input
+            id="keyword"
+            type="text"
+            placeholder="one piece, pokemon"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button class="primary" id="keyword-save-btn" type="button">Save</button>
+        </div>
+        <p class="muted small" id="keyword-hint"></p>
+
+        <details class="feed-address">
+          <summary>Read this in a feed reader instead</summary>
+          <div class="copy-row">
+            <input id="feed-url" type="text" readonly />
+            <button class="ghost" id="copy-btn" type="button">Copy</button>
+          </div>
+          <p class="muted small" id="feed-url-note"></p>
+        </details>
+
+        <p class="status" id="feed-status" role="status"></p>
+        <ul class="feed-list" id="feed-list"></ul>
+      </section>
+
       <section class="controls" aria-label="Filters">
         <input
           type="search"
@@ -179,40 +211,6 @@
         <p class="error" id="choose-error" hidden></p>
         <button class="primary wide" id="save-store-btn" type="button">Add store</button>
         <button class="linkish" id="choose-back-btn" type="button">Use a different URL</button>
-      </div>
-    </dialog>
-
-    <dialog id="feed-dialog">
-      <form method="dialog" class="dialog-close"><button aria-label="Close">&times;</button></form>
-
-      <div class="pane" id="pane-feed">
-        <h2>Updates</h2>
-        <p class="muted">Everything that has flipped to buyable or been newly listed.</p>
-
-        <label for="keyword">Text me about anything matching</label>
-        <div class="copy-row">
-          <input
-            id="keyword"
-            type="text"
-            placeholder="one piece, pokemon"
-            autocomplete="off"
-            spellcheck="false"
-          />
-          <button class="ghost" id="keyword-save-btn" type="button">Save</button>
-        </div>
-        <p class="muted small" id="keyword-hint">
-          Matching is loose: <em>one piece</em> also finds “OnePiece”, “One-Piece” and “OP”.
-          Separate several with commas. Leave empty to switch off.
-        </p>
-
-        <ul class="feed-list" id="feed-list"></ul>
-
-        <label for="feed-url">Feed address for a reader</label>
-        <div class="copy-row">
-          <input id="feed-url" type="text" readonly />
-          <button class="ghost" id="copy-btn" type="button">Copy</button>
-        </div>
-        <p class="muted small" id="feed-url-note"></p>
       </div>
     </dialog>
 

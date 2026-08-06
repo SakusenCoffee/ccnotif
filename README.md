@@ -289,10 +289,18 @@ The personal token is shown in the account dialog after you verify, and is linke
 from every alert text. It's a bearer token — anyone with the URL sees that
 watchlist (but can't change it or see the phone number).
 
-**The RSS button opens a page in the app, not a feed file.** It used to link
-straight to `/feed.xml`, which meant clicking it left the app and dropped you on a
-document written for software. The dialog shows recent updates, the keyword alert
-field, and the address to hand a feed reader.
+**The RSS button switches the page to an Updates view, in place.** It used to
+link straight to `/feed.xml`, which meant clicking it left the app and dropped you
+on a document written for software. The view shows the keyword alert field at the
+top — it is what you came there to set — then the updates it will match on, with
+the feed address tucked behind a disclosure for anyone who wants a reader.
+
+**An empty Updates list is normal on a fresh install.** Events are only written
+when something *changes*: a pre-order flips to buyable, or a new one appears. The
+first read of a store is deliberately silent, or adding a shop would post its
+entire catalogue as "news" and text everyone about it. Until a store changes,
+there is genuinely nothing to list, and the empty state says so rather than
+looking broken.
 
 **Opened directly, a feed still renders as a readable page.** `public/feed.xsl` is
 an XSLT stylesheet the browser applies to the very same document: images, prices,
