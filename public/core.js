@@ -32,6 +32,14 @@ export async function api(path, options = {}) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
+    // A session that has gone stale — expired, signed out elsewhere, or
+    // replaced by signing in from another browser — must land you back on the
+    // login page. Every screen here is behind the gate, so there is nothing
+    // useful to show and no way to recover in place; without this the page
+    // sits on "Loading…" forever, which reads as the site being broken.
+    if (res.status === 401 && data.error === 'not_signed_in') {
+      location.replace(`/login?next=${encodeURIComponent(location.pathname + location.search)}`);
+    }
     throw Object.assign(new Error(data.message || data.error || res.statusText), {
       data,
       status: res.status,

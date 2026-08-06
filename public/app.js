@@ -287,7 +287,7 @@ async function saveWatches() {
 const dialog = $('#dialog');
 
 function openDialog(pane) {
-  for (const id of ['login', 'register', 'password', 'phone', 'code', 'account']) {
+  for (const id of ['login', 'password', 'phone', 'code', 'account']) {
     $(`#pane-${id}`).hidden = id !== pane;
   }
   if (pane === 'account') {
@@ -299,7 +299,7 @@ function openDialog(pane) {
       : 'Watching in this browser only.';
     $('#change-pass-btn').hidden = !state.hasAccount;
   }
-  for (const id of ['#phone-error', '#code-error', '#login-error', '#reg-error', '#pass-error']) {
+  for (const id of ['#phone-error', '#code-error', '#login-error', '#pass-error']) {
     $(id).hidden = true;
   }
   if (!dialog.open) dialog.showModal();
@@ -615,8 +615,6 @@ function adoptSession(data) {
   state.selected = new Set(state.saved);
 }
 
-$('#to-register-btn').addEventListener('click', () => openDialog('register'));
-$('#to-login-btn').addEventListener('click', () => openDialog('login'));
 $('#to-phone-btn').addEventListener('click', () => openDialog('phone'));
 $('#pass-back-btn').addEventListener('click', () => openDialog('account'));
 $('#change-pass-btn').addEventListener('click', () => openDialog('password'));
@@ -639,21 +637,6 @@ $('#login-btn').addEventListener('click', async () => {
   }
 });
 
-$('#register-btn').addEventListener('click', async () => {
-  try {
-    await api('/api/register', {
-      method: 'POST',
-      body: { username: $('#reg-user').value, password: $('#reg-pass').value },
-    });
-    $('#reg-pass').value = '';
-    await loadMe();
-    renderAccount();
-    openDialog('account');
-  } catch (err) {
-    showError('#reg-error', err.data?.message ?? err.message);
-  }
-});
-
 $('#password-btn').addEventListener('click', async () => {
   try {
     await api('/api/password', {
@@ -672,7 +655,6 @@ $('#password-btn').addEventListener('click', async () => {
 for (const [field, button] of [
   ['#login-pass', '#login-btn'],
   ['#login-user', '#login-btn'],
-  ['#reg-pass', '#register-btn'],
   ['#new-pass', '#password-btn'],
 ]) {
   $(field).addEventListener('keydown', (e) => {
@@ -760,7 +742,11 @@ async function boot() {
     await reloadSites();
   } catch (err) {
     if (err.status === 503) return showSetup(err.message);
-    throw err;
+    // 401 has already sent us to the login page; stop rather than throwing an
+    // error nobody will ever see against a page that is being navigated away.
+    if (err.status === 401) return;
+    $('#status').textContent = `Could not start: ${err.message}`;
+    return;
   }
 
   $('#setup').hidden = true;

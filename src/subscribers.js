@@ -245,30 +245,6 @@ export async function setKeyword(subscriberId, keyword) {
 }
 
 /**
- * Attach an account to whoever is here. An anonymous watcher registering keeps
- * the row and the list they already built, rather than starting again.
- */
-export async function registerAccount(subscriber, rawUsername, rawPassword) {
-  const username = normalizeUsername(rawUsername);
-  if (!username) return { error: 'bad_username' };
-
-  const { rows: taken } = await query(
-    'select id from subscribers where lower(username) = $1',
-    [username],
-  );
-  if (taken.length) return { error: 'username_taken' };
-
-  const passwordHash = await hashPassword(rawPassword);
-  const { rows } = await query(
-    `update subscribers set username = $2, password_hash = $3
-      where id = $1
-      returning *`,
-    [subscriber.id, username, passwordHash],
-  );
-  return { subscriber: rows[0] };
-}
-
-/**
  * Check a username and password. Both failures answer the same way: saying
  * which of the two was wrong tells someone guessing that a username exists.
  */

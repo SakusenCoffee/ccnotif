@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sign in · Pre-Order Watch</title>
+    <meta name="robots" content="noindex" />
+    <!--
+      Deliberately self-contained: no shared stylesheet, no shared script.
+      Everything else on this site is behind the gate, and a login page that
+      pulls in the app's own assets would have to punch holes in it for them.
+    -->
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --panel: #171a21;
+        --line: #262b36;
+        --text: #e8eaef;
+        --muted: #99a1b3;
+        --accent: #6ea8fe;
+        --danger: #f87171;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background: var(--bg);
+        color: var(--text);
+        font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+      .card {
+        width: min(380px, 100%);
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 28px;
+      }
+      .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 22px; }
+      .dot {
+        width: 12px; height: 12px; border-radius: 50%;
+        background: #34d399; box-shadow: 0 0 0 4px rgba(52, 211, 153, .15);
+      }
+      h1 { font-size: 17px; margin: 0; }
+      p.sub { margin: 2px 0 0; font-size: 12.5px; color: var(--muted); }
+      label { display: block; font-size: 12.5px; color: var(--muted); margin: 16px 0 6px; }
+      input {
+        width: 100%; padding: 10px 12px;
+        background: var(--bg); color: var(--text);
+        border: 1px solid var(--line); border-radius: 9px;
+        font: inherit;
+      }
+      input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+      button {
+        width: 100%; margin-top: 20px; padding: 11px;
+        background: var(--accent); color: #0b1220;
+        border: 0; border-radius: 9px;
+        font: inherit; font-weight: 600; cursor: pointer;
+      }
+      button:disabled { opacity: .6; cursor: default; }
+      .error {
+        margin: 14px 0 0; padding: 9px 11px;
+        background: rgba(248, 113, 113, .1);
+        border: 1px solid rgba(248, 113, 113, .35);
+        border-radius: 9px;
+        color: var(--danger); font-size: 13px;
+      }
+      .note { margin: 18px 0 0; font-size: 12px; color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <div class="brand">
+        <span class="dot" aria-hidden="true"></span>
+        <div>
+          <h1>Pre-Order Watch</h1>
+          <p class="sub">Sign in to continue</p>
+        </div>
+      </div>
+
+      <form id="form" autocomplete="on">
+        <label for="username">Username</label>
+        <input id="username" name="username" type="text" autocomplete="username"
+               autocapitalize="off" spellcheck="false" required autofocus />
+
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password"
+               autocomplete="current-password" required />
+
+        <p class="error" id="error" hidden></p>
+        <button type="submit" id="submit">Sign in</button>
+      </form>
+
+      <p class="note">Accounts are created by the administrator.</p>
+    </main>
+
+    <script type="module">
+      const form = document.querySelector('#form');
+      const error = document.querySelector('#error');
+      const submit = document.querySelector('#submit');
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        error.hidden = true;
+        submit.disabled = true;
+        submit.textContent = 'Signing in…';
+
+        try {
+          const res = await fetch('/api/login', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              username: form.username.value,
+              password: form.password.value,
+            }),
+          });
+          const data = await res.json().catch(() => ({}));
+
+          if (!res.ok) {
+            error.textContent = data.message ?? 'Could not sign in.';
+            error.hidden = false;
+            form.password.value = '';
+            form.password.focus();
+            return;
+          }
+
+          // Go wherever the gate turned us away from, but only ever to a path on
+          // this site — an open redirect here would let a link that looks like
+          // ours land someone on somebody else's login form.
+          //
+          // Resolved against our own origin rather than string-matched, because
+          // the string tests are easy to get subtly wrong: "/\evil.com" starts
+          // with a single slash and passes a naive check, but a browser folds
+          // the backslash to a slash and treats it as protocol-relative — i.e.
+          // off-site. Parsing it the way the browser will is the only version
+          // that cannot be talked around.
+          const requested = new URLSearchParams(location.search).get('next');
+          let target = '/';
+          if (requested) {
+            const resolved = new URL(requested, location.origin);
+            if (resolved.origin === location.origin) target = resolved.pathname + resolved.search;
+          }
+          location.replace(target);
+        } catch (err) {
+          error.textContent = err.message;
+          error.hidden = false;
+        } finally {
+          submit.disabled = false;
+          submit.textContent = 'Sign in';
+        }
+      });
+    </script>
+  </body>
+</html>

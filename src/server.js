@@ -8,7 +8,7 @@ import { discoverSite } from './discover.js';
 import { getFeedItems, parseTypes, renderRss } from './feed.js';
 import { getRates, ratesFor, startFx } from './fx.js';
 import { describeSmsFailure, sendSms, verificationMessage } from './notify.js';
-import { PASSWORD_RULES, USERNAME_RULES, passwordProblem } from './auth.js';
+import { passwordProblem } from './auth.js';
 import { diagnoseTwilio } from './twilio-diagnose.js';
 import { adapterFor } from './platforms/index.js';
 import { pollerState, pollSite, runPoll, startPoller } from './poller.js';
@@ -23,7 +23,6 @@ import {
   getWatchNotifyMap,
   getWatchedProductIds,
   normalizePhone,
-  registerAccount,
   setKeyword,
   setWatchNotify,
   setWatches,
@@ -107,6 +106,73 @@ function requireAdmin(req, res, next) {
   if (provided !== config.adminToken) return res.status(401).json({ error: 'admin_required' });
   next();
 }
+
+// --- the gate ---------------------------------------------------------------
+//
+// Nothing here is public. A handful of paths have to be, and they are listed
+// rather than pattern-matched, because "everything except things matching X" is
+// how a route quietly ends up exposed.
+//
+//   /login, /login.html  the page itself, self-contained so it needs nothing else
+//   /api/login           the only way to get a session
+//   /healthz, /readyz    the platform's health checks; a gated one fails deploys
+//   /twilio/inbound      Twilio's webhook, which authenticates by signature
+//   /feed/<token>.xml    the token in the path *is* the credential
+//   /favicon.ico         requested before anything else and harmless
+const PUBLIC_PATHS = new Set([
+  '/login',
+  '/login.html',
+  '/api/login',
+  '/healthz',
+  '/readyz',
+  '/twilio/inbound',
+  '/favicon.ico',
+]);
+
+const PUBLIC_PATTERNS = [/^\/feed\/[A-Za-z0-9_-]+\.xml$/];
+
+/** A session belonging to a real account — not merely a session. */
+async function accountFromRequest(req) {
+  const subscriber = await subscriberBySession(req.cookies?.[config.sessionCookie]);
+  return subscriber?.password_hash ? subscriber : null;
+}
+
+app.use(async (req, res, next) => {
+  const path = req.path;
+  if (PUBLIC_PATHS.has(path) || PUBLIC_PATTERNS.some((re) => re.test(path))) return next();
+
+  // The database being down must not lock everyone out with a confusing 401 —
+  // let the request through to the handlers that explain themselves.
+  if (!dbState.ready && path.startsWith('/api/')) return next();
+
+  try {
+    const account = await accountFromRequest(req);
+    if (account) {
+      req.account = account;
+      return next();
+    }
+  } catch (err) {
+    return next(err);
+  }
+
+  // An API caller wants a status code; a browser wants the login page. Sending
+  // a redirect to fetch() would surface as a confusing parse error instead.
+  if (path.startsWith('/api/') || req.get('accept')?.includes('application/json')) {
+    return res.status(401).json({ error: 'not_signed_in', message: 'Sign in to continue.' });
+  }
+  const next_ = encodeURIComponent(req.originalUrl);
+  return res.redirect(302, `/login?next=${next_}`);
+});
+
+app.get('/login', (req, res) => {
+  // Already signed in? There is nothing to do here.
+  accountFromRequest(req)
+    .then((account) => {
+      if (account) return res.redirect(302, '/');
+      res.sendFile(fileURLToPath(new URL('../public/login.html', import.meta.url)));
+    })
+    .catch(() => res.sendFile(fileURLToPath(new URL('../public/login.html', import.meta.url))));
+});
 
 // Every /api route needs the database. Answer with a clear, actionable error
 // instead of a stack trace while it is still coming up.
@@ -494,40 +560,10 @@ app.put('/api/watches', withSubscriber, async (req, res, next) => {
 
 // --- accounts ---------------------------------------------------------------
 //
-// A username and password is the way to reach a watchlist from another browser
-// without a phone number being involved. It sits alongside the phone rather
-// than replacing it: the phone is for texting, this is for identity.
-
-app.post(
-  '/api/register',
-  withSubscriber,
-  rateLimit({ windowMs: 60 * 60_000, max: 10, key: 'register' }),
-  async (req, res, next) => {
-    try {
-      const problem = passwordProblem(req.body?.password);
-      if (problem) return res.status(400).json({ error: 'bad_password', message: problem });
-
-      if (req.subscriber.username) {
-        return res.status(400).json({
-          error: 'already_registered',
-          message: 'This session already has an account. Sign out first.',
-        });
-      }
-
-      const result = await registerAccount(req.subscriber, req.body?.username, req.body?.password);
-      if (result.error === 'bad_username') {
-        return res.status(400).json({ error: result.error, message: USERNAME_RULES });
-      }
-      if (result.error === 'username_taken') {
-        return res.status(409).json({ error: result.error, message: 'That username is taken.' });
-      }
-
-      res.json({ ok: true, username: result.subscriber.username });
-    } catch (err) {
-      next(err);
-    }
-  },
-);
+// Accounts are created from the command line (`npm run useradd`), never over
+// HTTP: there is no sign-up. Removing the button would not have been enough —
+// the endpoint behind it was the thing that let anyone in, so it is gone.
+// Signing in and changing your own password are all that remain.
 
 app.post(
   '/api/login',
