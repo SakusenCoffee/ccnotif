@@ -58,6 +58,12 @@ setInterval(() => {
   for (const [k, v] of hits) if (now > v.resetAt) hits.delete(k);
 }, 60_000).unref();
 
+// How long adding a store waits for its first read before answering anyway.
+// Long enough that a JSON-feed store still returns real counts in the response,
+// short enough to be nowhere near any proxy's idle timeout.
+const SEED_WAIT_MS = 12_000;
+const PENDING = Symbol('seeding');
+
 async function requireSubscriber(req, res, next) {
   const subscriber = await subscriberBySession(req.cookies?.[config.sessionCookie]);
   if (!subscriber) return res.status(401).json({ error: 'not_signed_in' });
@@ -157,12 +163,35 @@ app.post(
       }
 
       const site = await addSite(req.body ?? {});
-      // Seed it before responding so the UI shows real product counts straight
-      // away rather than an empty store until the next tick. pollSite reports
-      // failures through site.last_error instead of throwing, so a store that
-      // can't be read is still created and shows its error in the list.
-      const result = await pollSite(site);
-      res.status(201).json({ site, result });
+
+      // Seed before responding *if it's quick*, so the UI shows real product
+      // counts straight away rather than an empty store until the next tick.
+      //
+      // But a scraped store is read one listing page at a time, spaced by the
+      // crawl delay it asks for: seeding Miniature Market's pre-order sections
+      // takes minutes, and no HTTP request survives that — the browser and the
+      // platform's edge both give up long before it lands, and the store looks
+      // like it failed to add when it is in fact being read perfectly well.
+      // So the seed always runs to completion in the background; we just stop
+      // waiting on it. pollSite reports failures through site.last_error rather
+      // than throwing, so a store that can't be read is still created and shows
+      // its error in the list.
+      const seeding = pollSite(site).catch((err) => {
+        console.error(`[http] background seed of ${site.origin} failed: ${err.message}`);
+        return null;
+      });
+
+      const result = await Promise.race([
+        seeding,
+        new Promise((resolve) => setTimeout(() => resolve(PENDING), SEED_WAIT_MS).unref?.()),
+      ]);
+
+      res.status(201).json({
+        site,
+        result: result === PENDING ? null : result,
+        // The client polls the store list until this clears.
+        seeding: result === PENDING,
+      });
     } catch (err) {
       if (err.code === 'duplicate' || err.code === 'no_collections' || err.message) {
         return res.status(400).json({ error: err.code ?? 'add_failed', message: err.message });

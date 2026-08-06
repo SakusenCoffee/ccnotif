@@ -113,6 +113,20 @@ the previous run is still in flight rather than piling runs up. If a section is
 still not finished within `CRAWL_MAX_PAGES`, the run says so explicitly instead of
 reporting a clean sweep over a partial catalogue.
 
+Because of that cost, **adding a store doesn't block on its first read.** A store
+whose catalogue is a JSON feed still seeds within the request and returns real
+counts, but a scraped one answers as soon as the row exists and finishes reading in
+the background — no HTTP request survives a multi-minute crawl, and one that dies
+mid-read makes a store look like it failed to add when it was being read perfectly
+well. The store list shows *reading catalogue…* and refreshes itself until the
+first read lands. Nothing is texted from a seed run either way.
+
+For the same reason, sections are **not** pre-ticked on a scraped store. Several of
+them usually overlap — Miniature Market's site-wide `/preorders` contains everything
+in the seven per-department listings — so ticking the suggestions wholesale would
+read the same catalogue twice over. The scan says what each page costs and lets you
+choose.
+
 ## Deploying to Railway
 
 1. **Create the project** and point it at this repo.

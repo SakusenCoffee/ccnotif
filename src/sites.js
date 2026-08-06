@@ -39,7 +39,10 @@ async function assertNotAlreadyAdded(origin) {
 export async function addSite({ url, collections, name }) {
   await assertNotAlreadyAdded(normalizeOrigin(url));
 
-  const discovered = await discoverSite(url);
+  // A scan from moments ago is reused if there is one; otherwise this probes
+  // afresh. Either way the sections come from the server's own reading of the
+  // store, never from the request.
+  const discovered = await discoverSite(url, { allowRecent: true });
   // Discovery follows the store to its canonical host, so "example.com" and
   // "www.example.com" can't be added as two stores.
   const origin = discovered.origin;

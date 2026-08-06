@@ -201,8 +201,8 @@ export function discoverFromHtml(html, origin) {
   };
 }
 
-async function discover(origin, { signal } = {}) {
-  const html = await politeFetchText(`${origin}/`, { signal }).catch(() => null);
+async function discover(origin, { signal, homepage } = {}) {
+  const html = homepage ?? (await politeFetchText(`${origin}/`, { signal }).catch(() => null));
   return html ? discoverFromHtml(html, origin) : null;
 }
 
@@ -367,6 +367,9 @@ export const shopware = {
   id: 'shopware',
   label: 'Shopware',
   sectionNoun: 'category',
+  // Read by fetching pages rather than a feed, so a poll is slow and its cost
+  // scales with how much of the catalogue is watched.
+  scraped: true,
   discover,
   fetchProducts,
 };

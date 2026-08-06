@@ -42,6 +42,7 @@ function showError(id, message) {
 function renderStoreList() {
   const list = $('#store-list');
   list.replaceChildren();
+  watchSeeding();
 
   if (!state.sites.length) {
     const li = document.createElement('li');
@@ -67,7 +68,14 @@ function renderStoreList() {
     }
 
     const meta = document.createElement('span');
-    if (site.lastError) {
+    if (!site.seeded) {
+      // A scraped store is read a page at a time and can take minutes. Say so,
+      // rather than showing "0 products" as though it had failed.
+      meta.className = 'store-meta';
+      // The first read is written in one transaction at the end, so there is no
+      // running count to show — only "still going" and then the real figure.
+      meta.textContent = site.lastError ?? 'reading catalogue…';
+    } else if (site.lastError) {
       meta.className = 'store-meta bad';
       meta.textContent = site.lastError;
     } else {
@@ -132,6 +140,27 @@ export async function reloadSites() {
   return state.sites;
 }
 
+// While a store is still being read, keep the list refreshing so its counts
+// climb on their own. Adding a scraped store returns long before its first read
+// finishes, and without this the row would sit at "0 products" until a reload.
+let watchTimer = null;
+
+function watchSeeding() {
+  clearTimeout(watchTimer);
+  if (!state.sites.some((s) => !s.seeded)) return;
+
+  watchTimer = setTimeout(async () => {
+    try {
+      await reloadSites();
+      renderStoreList();
+      state.onSitesChanged?.();
+    } catch {
+      // A failed refresh is not worth surfacing; the next tick tries again.
+    }
+    watchSeeding();
+  }, 5_000);
+}
+
 // --- scanning ---------------------------------------------------------------
 
 function renderCollections() {
@@ -158,8 +187,11 @@ function renderCollections() {
     const box = document.createElement('input');
     box.type = 'checkbox';
     box.value = coll.handle;
-    // Pre-tick the ones that clearly are pre-order sections.
-    box.checked = (coll.score ?? 0) >= 70;
+    // Pre-tick the ones that clearly are pre-order sections — but never on a
+    // store we have to read a page at a time. There, every ticked section costs
+    // real minutes per poll, and several of them usually overlap, so the choice
+    // has to be the person's rather than ours.
+    box.checked = !discovered.crawlDelayMs && (coll.score ?? 0) >= 70;
 
     const text = document.createElement('span');
     text.className = 'coll-text';
@@ -208,6 +240,22 @@ async function scanStore() {
     $('#collection-label').textContent = discovered.suggested.length
       ? `${discovered.suggested.length} look like pre-order sections`
       : `${plural[0].toUpperCase()}${plural.slice(1)} to watch`;
+
+    // This store publishes no feed, so it gets read a listing page at a time at
+    // whatever rate its robots.txt asks for. Say what that costs before someone
+    // ticks eight overlapping sections and wonders why polls take all day.
+    const hint = $('#crawl-hint');
+    if (discovered.crawlDelayMs) {
+      const seconds = Math.round(discovered.crawlDelayMs / 1000);
+      hint.textContent =
+        `${discovered.name} publishes no product feed, so each ${noun} is read a page ` +
+        `at a time — about 24 products every ${seconds}s, as its robots.txt asks. ` +
+        `Tick only the ${plural} you actually want; a store-wide “all pre-orders” ` +
+        `${noun} can take over ten minutes to read on every poll.`;
+      hint.hidden = false;
+    } else {
+      hint.hidden = true;
+    }
 
     renderCollections();
     showPane('choose');
