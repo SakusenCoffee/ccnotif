@@ -5,3 +5,7 @@ npm-debug.log*
 
 # Local machine settings, not part of the project
 .claude/
+
+# Purchase automation. Local only — this repo is public, and an auto-checkout
+# script is neither something to publish nor something to hand a stranger.
+userscript/
