@@ -229,6 +229,33 @@ the seed run records state without emitting events or sending anything. Adding a
 store waits for that seed before responding, so the UI shows real counts rather
 than an empty store.
 
+**"Buyable" and "in stock" are not the same thing.** Shopify's `available` flag
+only means "can be added to cart", which is equally true of stock on hand and of
+an open pre-order — so a pre-order that just opened was being labelled "In stock".
+There is no native pre-order flag to consult: the fields that would settle it
+(`inventory_policy`, `inventory_quantity`) are Admin-API only, absent from both
+`products.json` and the `/products/<handle>.js` AJAX endpoint, which was checked
+directly.
+
+What stores do reliably is say so in the product title ("… (Pre Order)") and in
+tags. Detection uses both, ignoring `*Show_Pre Orders`-style tags — those are
+theme filter markers sitting on every item in a collection, so they are evidence
+of nothing. Across Hobbiesville's three watched collections this identifies 316
+of 317 products, with 2 false positives in a 250-item non-pre-order control.
+
+That yields four states rather than two: **Pre-order open**, **Pre-order not
+open**, **In stock**, **Sold out** — and a filter to show only one kind. On the
+watched collections it separates 107 open pre-orders from 1 genuinely in-stock
+item, which the old single "In stock" badge had lumped together.
+
+**Prices are shown in the store's currency with an approximate conversion.**
+Hobbiesville charges CAD, so a card reads `CA$193.00` with `≈ $137.63` beneath.
+The conversion is indicative only — the store bills in its own currency and a
+card issuer applies its own rate and fees — hence the `≈`. Rates come from a free
+keyless provider (with a second as fallback), cached for six hours; if the lookup
+fails the conversion is simply omitted. Set `DISPLAY_CURRENCY` to change the
+target.
+
 **Prices of `0.00` mean "TBA", not "free".** Shopify reports zero for pre-orders
 whose price hasn't been announced. These become null at ingest so the UI, feed,
 and texts all say "Price TBA".

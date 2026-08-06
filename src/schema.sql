@@ -27,6 +27,7 @@ create table if not exists products (
   image_url           text,
   price               numeric(10, 2),
   available           boolean     not null default false,
+  is_preorder         boolean     not null default false,
   collections         text[]      not null default '{}',
   published_at        timestamptz,
   first_seen_at       timestamptz not null default now(),
@@ -34,6 +35,9 @@ create table if not exists products (
   became_available_at timestamptz,
   unique (site_id, external_id)
 );
+
+-- Added after the first deploy, so it has to be an ALTER for existing databases.
+alter table products add column if not exists is_preorder boolean not null default false;
 
 create index if not exists products_available_idx on products (site_id, available);
 create index if not exists products_title_idx on products (lower(title));

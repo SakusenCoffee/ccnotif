@@ -1,11 +1,30 @@
-import { $, api, money, state } from './core.js';
+import { $, api, convertedMoney, money, state } from './core.js';
 import { initStores, openStores, reloadSites } from './stores.js';
 
 // --- rendering --------------------------------------------------------------
 
+/**
+ * `available` alone is ambiguous: for a pre-order it means "you can place one
+ * now", not "it is on a shelf". Combining it with is_preorder gives four states
+ * that actually mean different things to a buyer.
+ */
+function statusOf(product) {
+  if (product.is_preorder) {
+    return product.available
+      ? { label: 'Pre-order open', cls: 'pre' }
+      : { label: 'Pre-order not open', cls: 'out' };
+  }
+  return product.available
+    ? { label: 'In stock', cls: 'in' }
+    : { label: 'Sold out', cls: 'out' };
+}
+
 function card(product) {
   const li = document.createElement('li');
   li.className = 'card' + (state.selected.has(product.id) ? ' selected' : '');
+
+  const status = statusOf(product);
+  const approx = convertedMoney(product.price, product.currency);
 
   const label = document.createElement('label');
   label.innerHTML = `
@@ -15,14 +34,13 @@ function card(product) {
         : '<span class="placeholder">No image</span>'
     }</span>
     <span class="card-body">
-      <span class="badge ${product.available ? 'in' : 'out'}">${
-        product.available ? 'In stock' : 'Not buyable yet'
-      }</span>
+      <span class="badge ${status.cls}">${status.label}</span>
       <span class="card-title"></span>
       <span class="card-meta">
         <span class="meta-text">
           <span class="vendor"></span>
           <span class="price">${money(product.price, product.currency)}</span>
+          ${approx ? `<span class="price-alt">≈ ${approx}</span>` : ''}
         </span>
       </span>
     </span>
@@ -73,6 +91,8 @@ function renderGrid() {
   $('.controls').hidden = noStores;
   $('.intro').hidden = noStores;
 
+  renderHeader();
+
   const shown = state.products.length;
   $('#status').textContent = shown
     ? `${shown} product${shown === 1 ? '' : 's'}${state.q ? ` matching “${state.q}”` : ''}`
@@ -118,17 +138,19 @@ function renderSiteFilter() {
   // Only worth showing once there's more than one store to choose between.
   select.hidden = state.sites.length < 2;
 
-  const totals = state.sites.reduce(
-    (acc, s) => ({
-      products: acc.products + (s.productCount ?? 0),
-      available: acc.available + (s.availableCount ?? 0),
-    }),
-    { products: 0, available: 0 },
-  );
-  $('#store-sub').textContent = state.sites.length
-    ? `${state.sites.length} store${state.sites.length === 1 ? '' : 's'} · ` +
-      `${totals.products} pre-orders tracked · ${totals.available} buyable now`
-    : 'No stores added yet';
+  renderHeader();
+}
+
+function renderHeader() {
+  if (!state.sites.length) {
+    $('#store-sub').textContent = 'No stores added yet';
+    return;
+  }
+  const stores = `${state.sites.length} store${state.sites.length === 1 ? '' : 's'}`;
+  const t = state.totals;
+  $('#store-sub').textContent = t
+    ? `${stores} · ${t.total} tracked · ${t.preorders_open} pre-orders open · ${t.in_stock} in stock`
+    : `${stores} · loading…`;
 }
 
 // --- data -------------------------------------------------------------------
@@ -143,7 +165,12 @@ async function loadProducts() {
     return;
   }
 
-  const params = new URLSearchParams({ status: state.status, sort: state.sort, limit: '600' });
+  const params = new URLSearchParams({
+    status: state.status,
+    sort: state.sort,
+    type: state.type,
+    limit: '600',
+  });
   if (state.q) params.set('q', state.q);
   if (state.siteId) params.set('siteId', state.siteId);
 
@@ -152,6 +179,8 @@ async function loadProducts() {
     const data = await api(`/api/products?${params}`);
     if (mine !== loadToken) return; // a newer request already won
     state.products = data.products;
+    state.fx = data.fx ?? null;
+    state.totals = data.totals;
     renderGrid();
   } catch (err) {
     if (mine === loadToken) $('#status').textContent = `Could not load products: ${err.message}`;
@@ -351,6 +380,11 @@ $('#sort').addEventListener('change', (e) => {
 
 $('#site-filter').addEventListener('change', (e) => {
   state.siteId = e.target.value;
+  loadProducts();
+});
+
+$('#type-filter').addEventListener('change', (e) => {
+  state.type = e.target.value;
   loadProducts();
 });
 

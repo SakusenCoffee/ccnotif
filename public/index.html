@@ -56,9 +56,14 @@
         <select id="site-filter" aria-label="Store">
           <option value="">All stores</option>
         </select>
+        <select id="type-filter" aria-label="Product type">
+          <option value="all">Pre-orders &amp; stock</option>
+          <option value="preorder">Pre-orders only</option>
+          <option value="instock">In-stock items only</option>
+        </select>
         <div class="segmented" role="group" aria-label="Availability filter">
-          <button type="button" data-status="unavailable" class="active">Not yet buyable</button>
-          <button type="button" data-status="available">In stock</button>
+          <button type="button" data-status="unavailable" class="active">Not buyable</button>
+          <button type="button" data-status="available">Buyable now</button>
           <button type="button" data-status="all">All</button>
         </div>
         <select id="sort" aria-label="Sort order">

@@ -45,7 +45,7 @@ export async function findOrCreateSubscriber(phone) {
 export async function startVerification(phone) {
   const subscriber = await findOrCreateSubscriber(phone);
 
-  if (subscriber.code_sent_at) {
+  if (config.verification.resendCooldownSeconds > 0 && subscriber.code_sent_at) {
     const elapsed = (Date.now() - new Date(subscriber.code_sent_at).getTime()) / 1000;
     const remaining = Math.ceil(config.verification.resendCooldownSeconds - elapsed);
     if (remaining > 0) return { subscriber, retryAfter: remaining };

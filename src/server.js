@@ -6,6 +6,7 @@ import { assertConfig, config } from './config.js';
 import { dbState, initDb, query } from './db.js';
 import { discoverSite } from './discover.js';
 import { getFeedItems, parseTypes, renderRss } from './feed.js';
+import { getRates, ratesFor, startFx } from './fx.js';
 import { describeSmsFailure, sendSms, verificationMessage } from './notify.js';
 import { diagnoseTwilio } from './twilio-diagnose.js';
 import { pollerState, pollSite, runPoll, startPoller } from './poller.js';
@@ -203,7 +204,7 @@ app.post('/api/sites/:id/poll', requireAdmin, async (req, res, next) => {
 
 app.get('/api/products', async (req, res, next) => {
   try {
-    const { q, status = 'all', vendor, sort = 'title', siteId } = req.query;
+    const { q, status = 'all', vendor, sort = 'title', siteId, type = 'all' } = req.query;
     const limit = Math.min(Number.parseInt(req.query.limit ?? '500', 10) || 500, 1000);
     const offset = Math.max(Number.parseInt(req.query.offset ?? '0', 10) || 0, 0);
 
@@ -218,6 +219,8 @@ app.get('/api/products', async (req, res, next) => {
     }
     if (status === 'available') where.push('p.available');
     if (status === 'unavailable') where.push('not p.available');
+    if (type === 'preorder') where.push('p.is_preorder');
+    if (type === 'instock') where.push('not p.is_preorder');
     if (vendor) {
       params.push(vendor);
       where.push(`p.vendor = $${params.length}`);
@@ -238,8 +241,9 @@ app.get('/api/products', async (req, res, next) => {
     params.push(limit, offset);
     const { rows } = await query(
       `select p.id, p.external_id, p.handle, p.title, p.vendor, p.image_url, p.price,
-              p.available, p.published_at, p.became_available_at, p.collections,
-              p.site_id, s.name as site_name, s.origin as site_origin, s.currency
+              p.available, p.is_preorder, p.published_at, p.became_available_at,
+              p.collections, p.site_id, s.name as site_name, s.origin as site_origin,
+              s.currency
          from products p
          join sites s on s.id = p.site_id
         where ${where.join(' and ')}
@@ -251,14 +255,21 @@ app.get('/api/products', async (req, res, next) => {
     const totalParams = siteId ? [Number(siteId)] : [];
     const { rows: totals } = await query(
       `select count(*)::int as total,
-              count(*) filter (where available)::int as available
+              count(*) filter (where available)::int as available,
+              count(*) filter (where is_preorder)::int as preorders,
+              count(*) filter (where is_preorder and available)::int as preorders_open,
+              count(*) filter (where not is_preorder and available)::int as in_stock
          from products ${siteId ? 'where site_id = $1' : ''}`,
       totalParams,
     );
 
+    // Indicative conversion so a CAD price can show a USD figure beside it.
+    await getRates().catch(() => {});
+
     res.json({
       products: rows.map((p) => ({ ...p, url: `${p.site_origin}/products/${p.handle}` })),
       totals: totals[0],
+      fx: ratesFor(rows.map((p) => p.currency)),
       appName: config.appName,
     });
   } catch (err) {
@@ -526,6 +537,7 @@ async function seedFirstSite() {
 // deploy comes up and can explain itself rather than crash-looping.
 const server = app.listen(config.port, () => {
   console.log(`[http] listening on :${config.port} (public: ${config.publicUrl})`);
+  startFx();
 
   // Keep retrying in the background; the poller starts once the schema is in.
   initDb({

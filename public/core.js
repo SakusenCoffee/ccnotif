@@ -12,6 +12,8 @@ export const state = {
   status: 'unavailable',
   sort: 'title',
   siteId: '',
+  type: 'all',
+  fx: null,
   q: '',
   // Set by app.js so the stores module can trigger a refresh without importing it.
   onSitesChanged: null,
@@ -45,4 +47,16 @@ export function money(value, currency = 'USD') {
   } catch {
     return `${Number(value).toFixed(2)} ${currency}`;
   }
+}
+
+/**
+ * Approximate price in the display currency, or null when no conversion applies.
+ * `fx.rates` maps the base currency to each store currency, so divide to invert.
+ */
+export function convertedMoney(value, currency) {
+  const { base, rates } = state.fx ?? {};
+  if (!base || !value || !currency || currency === base) return null;
+  const rate = rates?.[currency];
+  if (!rate) return null;
+  return money(Number(value) / rate, base);
 }

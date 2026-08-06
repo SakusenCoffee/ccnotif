@@ -49,8 +49,8 @@ async function syncSite(site) {
       const { rows } = await client.query(
         `insert into products (site_id, external_id, handle, title, vendor, product_type,
                                image_url, price, available, collections, published_at,
-                               last_seen_at, became_available_at)
-           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, now(),
+                               is_preorder, last_seen_at, became_available_at)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, now(),
                    case when $9 then now() else null end)
          on conflict (site_id, external_id) do update set
            handle       = excluded.handle,
@@ -60,6 +60,7 @@ async function syncSite(site) {
            image_url    = excluded.image_url,
            price        = excluded.price,
            available    = excluded.available,
+           is_preorder  = excluded.is_preorder,
            collections  = excluded.collections,
            published_at = excluded.published_at,
            last_seen_at = now(),
@@ -80,6 +81,7 @@ async function syncSite(site) {
           p.available,
           p.collections,
           p.publishedAt,
+          p.isPreorder,
         ],
       );
       const productId = rows[0].id;

@@ -81,7 +81,9 @@ export const config = {
   verification: {
     codeTtlMinutes: int(process.env.CODE_TTL_MINUTES, 10),
     maxAttempts: int(process.env.CODE_MAX_ATTEMPTS, 5),
-    resendCooldownSeconds: int(process.env.CODE_RESEND_COOLDOWN_SECONDS, 60),
+    // Off by default. It only ever blocked legitimate retries while getting
+    // Twilio working; the per-IP rate limit still guards against abuse.
+    resendCooldownSeconds: int(process.env.CODE_RESEND_COOLDOWN_SECONDS, 0),
   },
 
   // When set, adding/editing/removing stores requires this token. Leave unset
@@ -89,6 +91,9 @@ export const config = {
   adminToken: str('ADMIN_TOKEN') ?? null,
 
   defaultCountry: str('DEFAULT_PHONE_COUNTRY') || 'US',
+  // Prices are shown in the store's own currency, with an approximate
+  // conversion to this one beside them.
+  displayCurrency: (str('DISPLAY_CURRENCY') || 'USD').toUpperCase(),
   maxWatchesPerSubscriber: int(process.env.MAX_WATCHES, 100),
   maxSites: int(process.env.MAX_SITES, 25),
   sessionCookie: 'pw_session',
