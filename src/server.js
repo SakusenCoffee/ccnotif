@@ -924,6 +924,57 @@ app.get('/api/dispatch', requireSubscriber, async (req, res, next) => {
  * otherwise do — a link that stays armed is a link that buys something the
  * second time it is opened.
  */
+/**
+ * Queue a match for a product you already watch, now, without waiting for it to
+ * actually restock.
+ *
+ * The whole chain — dispatch, agent, ticket, the script arming a page — is
+ * otherwise only exercisable by luck, which is a bad way to find out that one
+ * link is broken. It is limited to products on your own watchlist, so this
+ * cannot be used to point the buyer at something you never chose.
+ *
+ * It creates a real event of type `new`, because a synthetic one that behaved
+ * differently from the real thing would be testing the wrong system.
+ */
+app.post('/api/dispatch/test', requireSubscriber, async (req, res, next) => {
+  try {
+    const productId = Number(req.body?.productId);
+    if (!Number.isFinite(productId)) return res.status(400).json({ error: 'bad_product' });
+
+    const { rows: watched } = await query(
+      `select p.id, p.title, p.url, p.price
+         from watches w join products p on p.id = w.product_id
+        where w.subscriber_id = $1 and w.product_id = $2`,
+      [req.subscriber.id, productId],
+    );
+    if (!watched.length) {
+      return res.status(404).json({
+        error: 'not_watched',
+        message: 'You can only rehearse with a product you watch.',
+      });
+    }
+
+    const product = watched[0];
+    const { rows: event } = await query(
+      `insert into events (product_id, type, title, url, price)
+         values ($1, 'new', $2, $3, $4)
+       returning id`,
+      [product.id, product.title, product.url, product.price],
+    );
+
+    await query(
+      `insert into dispatches (subscriber_id, event_id, term)
+         values ($1, $2, 'test')
+       on conflict do nothing`,
+      [req.subscriber.id, event[0].id],
+    );
+
+    res.json({ ok: true, eventId: event[0].id, title: product.title });
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.post('/api/dispatch/claim', requireSubscriber, async (req, res, next) => {
   try {
     const ids = Array.isArray(req.body?.eventIds)

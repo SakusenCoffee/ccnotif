@@ -149,11 +149,38 @@ function card(product) {
       }
     });
 
+    // A rehearsal, without waiting for the thing to actually restock. Only
+    // useful once Auto-buy is on, since that is the path being rehearsed.
+    const test = document.createElement('button');
+    test.type = 'button';
+    test.className = 'remove-watch';
+    test.textContent = 'Test';
+    test.title = 'Queue this for the agent now, as if it had just restocked';
+
+    test.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      test.disabled = true;
+      const before = test.textContent;
+      try {
+        await api('/api/dispatch/test', { method: 'POST', body: { productId: product.id } });
+        test.textContent = settings.autobuy ? 'Queued' : 'Queued (Auto-buy is off)';
+      } catch (err) {
+        test.textContent = err.data?.message ?? err.message;
+      } finally {
+        setTimeout(() => {
+          test.textContent = before;
+          test.disabled = false;
+        }, 4000);
+      }
+    });
+
     const actions = document.createElement('span');
     actions.className = 'watch-actions';
     actions.append(
       toggle('notify', `${noun === 'text' ? 'Text' : 'Notify'} me`, `Get an ${noun} when this changes`),
       toggle('autobuy', 'Auto-buy', 'Hand this to the buyer script when it becomes buyable', 'buy'),
+      test,
       remove,
     );
     label.querySelector('.card-body').append(actions);
