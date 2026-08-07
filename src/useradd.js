@@ -102,12 +102,15 @@ async function passwd(rawUsername, rawPassword) {
   // Rotating the session token too, so a password reset actually ends whatever
   // session prompted it. Resetting a password while the other party stays
   // signed in achieves nothing.
-  const { rowCount } = await query(
-    `update subscribers set password_hash = $2, session_token = null
-      where lower(username) = $1`,
+  const { rows } = await query(
+    `update subscribers set password_hash = $2 where lower(username) = $1 returning id`,
     [username, await hashPassword(password)],
   );
-  if (!rowCount) throw new Error(`No account called "${username}".`);
+  if (!rows.length) throw new Error(`No account called "${username}".`);
+
+  // Every session for that account, not just one: a reset that leaves whoever
+  // prompted it still signed in has achieved nothing.
+  await query('delete from sessions where subscriber_id = $1', [rows[0].id]);
 
   console.log(`\nReset the password for "${username}".`);
   console.log(`Password: ${password}`);

@@ -23,13 +23,14 @@ import {
   clearVerificationCooldown,
   ensureBootstrapAccount,
   createAnonymousSubscriber,
+  endSession,
   getWatchSettings,
   getWatchedProductIds,
   normalizePhone,
   rotatePushTopic,
   setPushEnabled,
   setWatchSettings,
-  setWatches,
+  updateWatches,
   startVerification,
   subscriberByFeedToken,
   subscriberBySession,
@@ -649,10 +650,20 @@ app.get('/api/me', async (req, res, next) => {
   }
 });
 
-app.put('/api/watches', withSubscriber, async (req, res, next) => {
+/**
+ * Add and remove watched products.
+ *
+ * Deliberately a change rather than a replacement. Sending the whole list meant
+ * a client with a stale copy deleted everything it had not heard about, so two
+ * tabs — or one left open while something changed elsewhere — quietly wiped the
+ * difference. This way an out-of-date client can only affect what it touched.
+ */
+app.patch('/api/watches', withSubscriber, async (req, res, next) => {
   try {
-    const ids = Array.isArray(req.body?.productIds) ? req.body.productIds : [];
-    const saved = await setWatches(req.subscriber.id, ids);
+    const saved = await updateWatches(req.subscriber.id, {
+      add: req.body?.add,
+      remove: req.body?.remove,
+    });
     res.json({
       ok: true,
       watches: saved,
@@ -1111,10 +1122,17 @@ app.get('/api/match', requireSubscriber, async (req, res, next) => {
   }
 });
 
-app.post('/api/signout', (req, res) => {
-  forgetSession(req.cookies?.[config.sessionCookie]);
-  res.clearCookie(config.sessionCookie);
-  res.json({ ok: true });
+app.post('/api/signout', async (req, res, next) => {
+  try {
+    // This device only. Other places you are signed in stay signed in.
+    const current = req.cookies?.[config.sessionCookie];
+    await endSession(current);
+    forgetSession(current);
+    res.clearCookie(config.sessionCookie);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
 });
 
 app.post('/api/unsubscribe', requireSubscriber, async (req, res, next) => {
@@ -1210,7 +1228,10 @@ app.post(
 
       if (from && /^(STOP|STOPALL|UNSUBSCRIBE|CANCEL|END|QUIT)$/.test(body)) {
         await query(
-          'update subscribers set unsubscribed_at = now(), session_token = null where phone = $1',
+          `with stopped as (
+             update subscribers set unsubscribed_at = now() where phone = $1 returning id
+           )
+           delete from sessions where subscriber_id in (select id from stopped)`,
           [from],
         );
       } else if (from && /^(START|UNSTOP|YES)$/.test(body)) {

@@ -124,17 +124,16 @@ export async function checkVerification(phone, code) {
     return { error: 'mismatch', attemptsLeft: Math.max(0, left) };
   }
 
-  const session = token(32);
   const { rows: updated } = await query(
     `update subscribers
-        set verified = true, session_token = $2, code_hash = null,
+        set verified = true, code_hash = null,
             code_expires_at = null, code_attempts = 0
       where id = $1
       returning *`,
-    [subscriber.id, session],
+    [subscriber.id],
   );
 
-  return { subscriber: updated[0], session };
+  return { subscriber: updated[0], session: await startSession(subscriber.id) };
 }
 
 /**
@@ -145,21 +144,44 @@ export async function checkVerification(phone, code) {
  */
 export async function subscriberBySession(sessionToken) {
   if (!sessionToken) return null;
-  const { rows } = await query('select * from subscribers where session_token = $1', [
-    sessionToken,
-  ]);
+  const { rows } = await query(
+    `select s.* from sessions ses join subscribers s on s.id = ses.subscriber_id
+      where ses.token = $1`,
+    [sessionToken],
+  );
   return rows[0] ?? null;
+}
+
+/** Open a session without disturbing any other. */
+export async function startSession(subscriberId) {
+  const session = token(32);
+  await query('insert into sessions (token, subscriber_id) values ($1, $2)', [
+    session,
+    subscriberId,
+  ]);
+  return session;
+}
+
+/** Close one session — signing out here, not everywhere. */
+export async function endSession(sessionToken) {
+  if (!sessionToken) return;
+  await query('delete from sessions where token = $1', [sessionToken]);
+}
+
+/** Close every session for an account. Used when a password changes. */
+export async function endAllSessions(subscriberId) {
+  await query('delete from sessions where subscriber_id = $1', [subscriberId]);
 }
 
 /** A watcher with no phone yet. Identified only by the session cookie. */
 export async function createAnonymousSubscriber() {
   const { rows } = await query(
-    `insert into subscribers (phone, feed_token, session_token)
-       values (null, $1, $2)
-     returning *`,
-    [token(), token(32)],
+    `insert into subscribers (phone, feed_token) values (null, $1) returning *`,
+    [token()],
   );
-  return rows[0];
+  const subscriber = rows[0];
+  subscriber.session_token = await startSession(subscriber.id);
+  return subscriber;
 }
 
 export async function subscriberByFeedToken(feedToken) {
@@ -173,6 +195,58 @@ export async function getWatchedProductIds(subscriberId) {
     subscriberId,
   ]);
   return rows.map((r) => r.product_id);
+}
+
+/**
+ * Add and remove specific products, leaving everything else alone.
+ *
+ * The watchlist used to be saved by sending the whole thing, which meant a
+ * client holding a stale copy silently deleted whatever it had not heard about
+ * — two tabs, or one tab left open while something changed elsewhere, was
+ * enough to wipe the difference. Saying what changed rather than what the list
+ * should now be removes that entirely: an out-of-date client can only affect
+ * the products it actually touched.
+ */
+export async function updateWatches(subscriberId, { add = [], remove = [] }) {
+  const clean = (ids) =>
+    [...new Set((Array.isArray(ids) ? ids : []).map(Number).filter(Number.isFinite))];
+
+  const toRemove = clean(remove);
+  if (toRemove.length) {
+    await query(
+      'delete from watches where subscriber_id = $1 and product_id = any($2::bigint[])',
+      [subscriberId, toRemove],
+    );
+  }
+
+  const wanted = clean(add);
+  if (wanted.length) {
+    // Ignore ids that aren't products we actually track.
+    const { rows: valid } = await query('select id from products where id = any($1::bigint[])', [
+      wanted,
+    ]);
+
+    const { rows: current } = await query(
+      'select count(*)::int as n from watches where subscriber_id = $1',
+      [subscriberId],
+    );
+    const room = Math.max(0, config.maxWatchesPerSubscriber - current[0].n);
+    const ids = valid.map((r) => r.id).slice(0, room);
+
+    if (ids.length) {
+      // notify defaults off: watching something and wanting to be woken by it
+      // are separate choices, and the second has to be asked for. `do nothing`
+      // on conflict is what preserves a toggle already set.
+      await query(
+        `insert into watches (subscriber_id, product_id, notify)
+           select $1, unnest($2::bigint[]), false
+         on conflict do nothing`,
+        [subscriberId, ids],
+      );
+    }
+  }
+
+  return getWatchedProductIds(subscriberId);
 }
 
 /** Replace a subscriber's watchlist with exactly `productIds`. */
@@ -277,12 +351,11 @@ export async function authenticate(rawUsername, rawPassword) {
   );
   if (!subscriber || !ok) return null;
 
-  const session = token(32);
-  await query('update subscribers set session_token = $2, unsubscribed_at = null where id = $1', [
-    subscriber.id,
-    session,
-  ]);
-  return { subscriber, session };
+  // A new session, not a replacement for whatever else is signed in. An account
+  // exists to carry your watchlist between places, which it cannot do if
+  // arriving in one place evicts you from another.
+  await query('update subscribers set unsubscribed_at = null where id = $1', [subscriber.id]);
+  return { subscriber, session: await startSession(subscriber.id) };
 }
 
 /** Change a password, having first proved you know the current one. */
@@ -293,15 +366,16 @@ export async function changePassword(subscriber, currentPassword, newPassword) {
   }
 
   const passwordHash = await hashPassword(newPassword);
-  // A new session token as well: changing a password is how you lock out
-  // somebody else who has yours, which does nothing if their session survives.
-  const session = token(32);
-  await query('update subscribers set password_hash = $2, session_token = $3 where id = $1', [
+  await query('update subscribers set password_hash = $2 where id = $1', [
     subscriber.id,
     passwordHash,
-    session,
   ]);
-  return { session };
+
+  // Every session goes: changing a password is how you lock out somebody who
+  // has yours, which does nothing if the session they are already using
+  // survives. Then a fresh one, so the browser doing the changing stays in.
+  await endAllSessions(subscriber.id);
+  return { session: await startSession(subscriber.id) };
 }
 
 /**
@@ -374,10 +448,8 @@ export async function ensureBootstrapAccount({ username, password }) {
 }
 
 export async function unsubscribe(subscriberId) {
-  await query(
-    `update subscribers set unsubscribed_at = now(), session_token = null where id = $1`,
-    [subscriberId],
-  );
+  await query(`update subscribers set unsubscribed_at = now() where id = $1`, [subscriberId]);
+  await endAllSessions(subscriberId);
   await query('delete from watches where subscriber_id = $1', [subscriberId]);
   await query('delete from keyword_alerts where subscriber_id = $1', [subscriberId]);
 }

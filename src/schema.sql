@@ -210,6 +210,28 @@ create table if not exists events (
 
 create index if not exists events_created_idx on events (created_at desc);
 create index if not exists events_product_idx on events (product_id, created_at desc);
+-- Signed-in sessions, one row each.
+--
+-- This was a single column on the subscriber, which meant one session per
+-- account: signing in on a second device silently signed you out on the first,
+-- and the watchlist you were looking at stopped saving. An account is meant to
+-- be the thing that carries your list between places, so it has to hold more
+-- than one session at a time.
+create table if not exists sessions (
+  token         text        primary key,
+  subscriber_id bigint      not null references subscribers (id) on delete cascade,
+  created_at    timestamptz not null default now(),
+  last_seen_at  timestamptz not null default now()
+);
+
+create index if not exists sessions_subscriber_idx on sessions (subscriber_id);
+
+-- Carry across whatever single session each account was holding, so nobody is
+-- signed out by this migration.
+insert into sessions (token, subscriber_id)
+select session_token, id from subscribers where session_token is not null
+on conflict (token) do nothing;
+
 -- Authority to buy, issued when a match is handed to the agent.
 --
 -- This began inside the userscript's own storage, which worked only because the

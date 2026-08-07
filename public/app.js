@@ -132,10 +132,12 @@ function card(product) {
       e.preventDefault();
       remove.disabled = true;
       try {
-        const next = [...state.saved].filter((id) => id !== product.id);
-        const data = await api('/api/watches', { method: 'PUT', body: { productIds: next } });
-        state.saved = new Set(next);
-        state.selected = new Set(next);
+        const data = await api('/api/watches', {
+          method: 'PATCH',
+          body: { remove: [product.id] },
+        });
+        state.saved = new Set(data.watches);
+        state.selected = new Set(data.watches);
         delete state.notify[product.id];
         adoptMatch(data);
         // Reload rather than splicing the card out: the Watched view is a
@@ -360,9 +362,14 @@ async function saveWatches() {
   btn.disabled = true;
   btn.textContent = 'Saving…';
   try {
+    // Only what this page actually changed. Sending the whole selection meant a
+    // tab holding a stale list deleted whatever it had not heard about.
     const data = await api('/api/watches', {
-      method: 'PUT',
-      body: { productIds: [...state.selected] },
+      method: 'PATCH',
+      body: {
+        add: [...state.selected].filter((id) => !state.saved.has(id)),
+        remove: [...state.saved].filter((id) => !state.selected.has(id)),
+      },
     });
     state.saved = new Set(data.watches);
     state.selected = new Set(data.watches);
@@ -458,13 +465,21 @@ $('#check-code-btn').addEventListener('click', async () => {
     state.notify = data.notify ?? {};
     // Keep whatever the visitor ticked before signing in, plus anything already
     // on the server-side watchlist.
-    const before = state.selected.size;
-    for (const id of data.watches) state.selected.add(id);
+    const pending = [...state.selected].filter((id) => !data.watches.includes(id));
     state.saved = new Set(data.watches);
+    state.selected = new Set(data.watches);
     renderAccount();
     renderGrid();
 
-    if (before) await saveWatches();
+    // Anything ticked before signing in is added, never used to replace what
+    // the account already had.
+    if (pending.length) {
+      const merged = await api('/api/watches', { method: 'PATCH', body: { add: pending } });
+      state.saved = new Set(merged.watches);
+      state.selected = new Set(merged.watches);
+      renderGrid();
+      renderTray();
+    }
     openDialog('account');
   } catch (err) {
     const left = err.data?.attemptsLeft;
@@ -578,11 +593,13 @@ function renderFeedItems(events) {
 
       watch.addEventListener('click', async () => {
         watch.disabled = true;
-        const next = watching
-          ? [...state.saved].filter((id) => id !== event.product_id)
-          : [...state.saved, event.product_id];
         try {
-          const data = await api('/api/watches', { method: 'PUT', body: { productIds: next } });
+          const data = await api('/api/watches', {
+            method: 'PATCH',
+            body: watching
+              ? { remove: [event.product_id] }
+              : { add: [event.product_id] },
+          });
           state.saved = new Set(data.watches);
           state.selected = new Set(data.watches);
           if (!watching) {
