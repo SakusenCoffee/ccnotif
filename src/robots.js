@@ -187,7 +187,7 @@ export class RobotsDisallowed extends Error {
  * Fetch a page as a crawler should: rules checked, requests spaced out.
  * Returns the full response, including the URL it finally landed on.
  */
-export async function politeFetch(urlString, { signal, headers = {} } = {}) {
+export async function politeFetch(urlString, { signal, headers = {}, maxBytes } = {}) {
   const url = new URL(urlString);
   const origin = `${url.protocol}//${url.host}`;
 
@@ -198,6 +198,7 @@ export async function politeFetch(urlString, { signal, headers = {} } = {}) {
     safeFetch(urlString, {
       headers: { accept: 'text/html,application/xhtml+xml', ...headers },
       signal,
+      maxBytes,
     }),
   );
 }

@@ -1,3 +1,4 @@
+import { pbandai } from './pbandai.js';
 import { shopify } from './shopify.js';
 import { shopware } from './shopware.js';
 
@@ -11,8 +12,12 @@ import { shopware } from './shopware.js';
  * An adapter's `discover` returns null for "this isn't my platform" and throws
  * for "it is mine and something is wrong" — so a store we recognise but can't
  * read reports the real reason instead of falling through to "unsupported".
+ *
+ * P-Bandai leads because it settles on a hostname, which costs nothing: it is
+ * a single storefront rather than a platform other shops run, so there is no
+ * page to sniff.
  */
-export const ADAPTERS = [shopify, shopware];
+export const ADAPTERS = [pbandai, shopify, shopware];
 
 export function adapterFor(platform) {
   return ADAPTERS.find((a) => a.id === platform) ?? null;

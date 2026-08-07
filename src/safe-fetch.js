@@ -11,6 +11,10 @@ import net from 'node:net';
  */
 
 const MAX_BYTES = 8 * 1024 * 1024;
+// However large a caller claims its response may be, this is the real ceiling:
+// the body is buffered in memory, so an unbounded opt-out would just move the
+// failure from a clear error to the process being killed.
+const ABSOLUTE_MAX_BYTES = 32 * 1024 * 1024;
 const TIMEOUT_MS = 15_000;
 const MAX_REDIRECTS = 5;
 
@@ -95,8 +99,11 @@ export async function assertPublicHost(urlString) {
  * fetch() with the host check applied to every hop, a hard timeout, and a
  * response size cap.
  */
-export async function safeFetch(urlString, { headers = {}, signal } = {}) {
+export async function safeFetch(urlString, { headers = {}, signal, maxBytes = MAX_BYTES } = {}) {
   let current = urlString;
+  // A caller may raise the ceiling for one request it knows is legitimately
+  // large — a sitemap index, say — without loosening it for everything else.
+  const limit = Math.max(0, Math.min(maxBytes, ABSOLUTE_MAX_BYTES));
 
   for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
     await assertPublicHost(current);
@@ -134,10 +141,10 @@ export async function safeFetch(urlString, { headers = {}, signal } = {}) {
     }
 
     const declared = Number(res.headers.get('content-length') ?? 0);
-    if (declared > MAX_BYTES) throw new Error('The response was too large.');
+    if (declared > limit) throw new Error('The response was too large.');
 
     const text = await res.text();
-    if (text.length > MAX_BYTES) throw new Error('The response was too large.');
+    if (text.length > limit) throw new Error('The response was too large.');
 
     return {
       ok: res.ok,
