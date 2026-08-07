@@ -165,15 +165,26 @@ function card(product) {
       test.disabled = true;
       const before = test.textContent;
       try {
-        await api('/api/dispatch/test', { method: 'POST', body: { productId: product.id } });
-        test.textContent = settings.autobuy ? 'Queued' : 'Queued (Auto-buy is off)';
+        const data = await api('/api/dispatch/test', {
+          method: 'POST',
+          body: { productId: product.id },
+        });
+        // Say what actually happened, per channel. "Queued" told you nothing
+        // about whether the notification you were testing had gone anywhere.
+        const parts = (data.did ?? []).map((d) => {
+          if (d.channel === 'agent') return 'queued for the agent';
+          if (!d.ok) return d.error ?? `${d.channel} failed`;
+          return d.channel === 'push' ? 'push sent' : 'text sent';
+        });
+        test.textContent = parts.join(' · ') || 'nothing to do';
+        if ((data.did ?? []).some((d) => !d.ok)) showError('#store-error', parts.join(' · '));
       } catch (err) {
         test.textContent = err.data?.message ?? err.message;
       } finally {
         setTimeout(() => {
           test.textContent = before;
           test.disabled = false;
-        }, 4000);
+        }, 6000);
       }
     });
 

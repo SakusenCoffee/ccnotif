@@ -13,7 +13,7 @@ import { sendPush, testPush, topicUrl } from './push.js';
 import { addAlert, buildMatchString, deleteAlert, listAlerts, updateAlert } from './alerts.js';
 import { diagnoseTwilio } from './twilio-diagnose.js';
 import { adapterFor } from './platforms/index.js';
-import { pollerState, pollSite, runPoll, startPoller } from './poller.js';
+import { deliverRestock, pollerState, pollSite, runPoll, startPoller } from './poller.js';
 import { addSite, deleteSite, getSite, listSites, updateSite } from './sites.js';
 import {
   absorbAnonymous,
@@ -101,12 +101,19 @@ async function withSubscriber(req, res, next) {
   }
 }
 
+/**
+ * Note that these load the row rather than reusing the one the gate cached.
+ *
+ * The cache answers one question — is this session a real account? — and that
+ * answer is stable enough to hold for a few seconds across the dozen requests a
+ * page load makes. The row itself is not: switch push on and toggle a
+ * notification a second later, and a cached copy still says there is nowhere to
+ * send, so the toggle is refused for a reason that is no longer true. Identity
+ * is cacheable; state is not.
+ */
 async function requireSubscriber(req, res, next) {
   try {
-    // The gate has usually resolved this already; reuse it rather than issuing
-    // a second identical query for the same request.
-    const subscriber =
-      req.account ?? (await subscriberBySession(req.cookies?.[config.sessionCookie]));
+    const subscriber = await subscriberBySession(req.cookies?.[config.sessionCookie]);
     if (!subscriber) return res.status(401).json({ error: 'not_signed_in' });
     req.subscriber = subscriber;
     next();
@@ -953,8 +960,11 @@ app.post('/api/dispatch/test', requireSubscriber, async (req, res, next) => {
     if (!Number.isFinite(productId)) return res.status(400).json({ error: 'bad_product' });
 
     const { rows: watched } = await query(
-      `select p.id, p.title, p.url, p.price
-         from watches w join products p on p.id = w.product_id
+      `select p.id, p.title, p.url, p.price, p.image_url,
+              w.notify, w.autobuy, s.currency
+         from watches w
+         join products p on p.id = w.product_id
+         join sites s on s.id = p.site_id
         where w.subscriber_id = $1 and w.product_id = $2`,
       [req.subscriber.id, productId],
     );
@@ -968,19 +978,47 @@ app.post('/api/dispatch/test', requireSubscriber, async (req, res, next) => {
     const product = watched[0];
     const { rows: event } = await query(
       `insert into events (product_id, type, title, url, price)
-         values ($1, 'new', $2, $3, $4)
-       returning id`,
+         values ($1, 'restock', $2, $3, $4)
+       returning id, product_id, type, title, url, image_url, price, created_at`,
       [product.id, product.title, product.url, product.price],
     );
 
-    await query(
-      `insert into dispatches (subscriber_id, event_id, term)
-         values ($1, $2, 'test')
-       on conflict do nothing`,
-      [req.subscriber.id, event[0].id],
-    );
+    // Rehearse exactly what this watch is set to do — no more and no less.
+    // Queueing the buyer for a product whose Auto-buy is off would rehearse
+    // something that will never happen, and skipping the notification when
+    // Notify is on leaves the half most people want to check untested.
+    const did = [];
 
-    res.json({ ok: true, eventId: event[0].id, title: product.title });
+    if (product.notify) {
+      const results = await deliverRestock(req.subscriber, event[0], product.currency);
+      if (!results.length) {
+        did.push({
+          channel: 'none',
+          ok: false,
+          error: 'Notify is on, but there is nowhere to send it. Turn on push notifications.',
+        });
+      }
+      for (const r of results) did.push({ channel: r.channel, ok: r.ok, error: r.error ?? null });
+    }
+
+    if (product.autobuy) {
+      await query(
+        `insert into dispatches (subscriber_id, event_id, term)
+           values ($1, $2, 'test')
+         on conflict do nothing`,
+        [req.subscriber.id, event[0].id],
+      );
+      did.push({ channel: 'agent', ok: true });
+    }
+
+    if (!did.length) {
+      return res.status(400).json({
+        error: 'nothing_armed',
+        message: 'Turn on Notify or Auto-buy for this product first.',
+      });
+    }
+
+    res.json({ ok: true, eventId: event[0].id, title: product.title, did });
   } catch (err) {
     next(err);
   }

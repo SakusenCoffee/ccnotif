@@ -244,6 +244,46 @@ async function syncSite(site) {
 }
 
 /**
+ * Send one restock message to one person over every channel they have.
+ *
+ * Shared with the rehearsal in the UI, so pressing Test exercises the same code
+ * that a real restock does — a rehearsal that took a different path would be
+ * testing something other than the thing you want to trust.
+ */
+export async function deliverRestock(subscriber, event, currency) {
+  const results = [];
+
+  if (subscriber.ntfy_enabled && subscriber.ntfy_topic) {
+    const push = await sendPush(subscriber.ntfy_topic, restockPush(event, currency, formatPrice));
+    results.push({ channel: 'push', ...push });
+  }
+
+  if (subscriber.verified && subscriber.phone) {
+    const sms = await sendSms(
+      subscriber.phone,
+      restockMessage(event, subscriber.feed_token, currency),
+    );
+    results.push({ channel: 'sms', ...sms });
+  }
+
+  for (const result of results) {
+    await query(
+      `insert into deliveries (subscriber_id, event_id, status, provider_sid, error)
+         values ($1,$2,$3,$4,$5)`,
+      [
+        subscriber.id,
+        event.id,
+        result.ok ? 'sent' : 'failed',
+        result.sid ?? null,
+        result.error ?? null,
+      ],
+    );
+  }
+
+  return results;
+}
+
+/**
  * Text everyone watching a product that just came back in stock, respecting the
  * per-product cooldown so inventory flapping can't spam anyone.
  */
@@ -290,37 +330,7 @@ async function notifyRestocks(restockEvents) {
 
       // Every channel this person has, because someone who set up both wants
       // whichever arrives first, not an arbitrary one of the two.
-      const results = [];
-
-      if (watcher.ntfy_enabled && watcher.ntfy_topic) {
-        const push = await sendPush(
-          watcher.ntfy_topic,
-          restockPush(event, watcher.currency, formatPrice),
-        );
-        results.push({ channel: 'push', ...push });
-      }
-
-      if (watcher.verified && watcher.phone) {
-        const sms = await sendSms(
-          watcher.phone,
-          restockMessage(event, watcher.feed_token, watcher.currency),
-        );
-        results.push({ channel: 'sms', ...sms });
-      }
-
-      for (const result of results) {
-        await query(
-          `insert into deliveries (subscriber_id, event_id, status, provider_sid, error)
-             values ($1,$2,$3,$4,$5)`,
-          [
-            watcher.id,
-            event.id,
-            result.ok ? 'sent' : 'failed',
-            result.sid ?? null,
-            result.error ?? null,
-          ],
-        );
-      }
+      const results = await deliverRestock(watcher, event, watcher.currency);
 
       // One channel landing is enough to count as told, and to start the
       // cooldown — otherwise a broken second channel would re-alert forever.
